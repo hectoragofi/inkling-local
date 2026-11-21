@@ -88,3 +88,28 @@ cmake --build build --config Release -j 14 --target llama-server llama-bench
 ```
 
 Copy the three CUDA DLLs into `build\bin\Release` as for the prebuilt. Then set `$env:INK_EXE` for `hillclimb\srv.ps1`, or point `start-inkling.ps1` at `build\bin\Release\llama-server.exe`.
+
+## Faster build: realugbun `inkling2-speed` fork (~31 tok/s)
+
+[realugbun/llama.cpp](https://github.com/realugbun/llama.cpp) branch `inkling2-speed` is mainline llama.cpp with fused CUDA kernels for Inkling's glue ops. Mainline uses the `inkling2_loop` GGUF layout. `hillclimb\to_mainline.py` converts our pick to that layout without touching the tensor bytes. It renames the loop controllers and fetches the 12 small per-layer `loop_msg_query` tensors from unsloth's `Mainline_Support` file; those match our rows exactly.
+
+```powershell
+git clone --depth 1 -b inkling2-speed https://github.com/realugbun/llama.cpp src\llama.cpp-rb   # tested at 7669d89
+# build into build-rb\ with the same cmake flags as above, copy the 3 CUDA DLLs into build-rb\bin\Release
+curl.exe -sL -r 0-16777215 -o mainline-head.bin https://huggingface.co/unsloth/Inkling-2-Mini-GGUF/resolve/main/Mainline_Support/Inkling-2-Mini-UD-IQ3_XXS.gguf_file
+python hillclimb\to_mainline.py custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer.gguf custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf mainline-head.bin https://huggingface.co/unsloth/Inkling-2-Mini-GGUF/resolve/main/Mainline_Support/Inkling-2-Mini-UD-IQ3_XXS.gguf_file
+```
+
+`start-inkling.ps1` uses the fork and the mainline pick automatically once `build-rb\` exists.
+
+Measured with llama-bench, pick config:
+
+| | prebuilt / my patch | fork |
+|---|---:|---:|
+| decode, 32K mode | 25.9 | **31.0** |
+| prefill, 32K mode | 173 | **196** |
+| decode, 128K mode, empty context | 23.4 | **26.9** |
+| decode, 128K mode, 32K deep | 21.2 | **23.0** |
+| prefill, 128K mode, 32K deep | 121 | **162** |
+
+Quality is unchanged: KLD vs Q4_K_XL is 0.0152 (was 0.0150), same-top 96.37%, smoke test passes. At 107K tokens of context, decode is 19.5 tok/s.
