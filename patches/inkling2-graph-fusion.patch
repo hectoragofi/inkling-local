@@ -1,0 +1,60 @@
+diff --git a/src/models/inkling2.cpp b/src/models/inkling2.cpp
+index b820092..fd12392 100644
+--- a/src/models/inkling2.cpp
++++ b/src/models/inkling2.cpp
+@@ -209,21 +209,32 @@ ggml_tensor * llama_model_inkling2::graph::clip(ggml_tensor * cur, ggml_tensor *
+         cur = ggml_mul(ctx0, cur, scale);
+     }
+ 
+-    ggml_tensor * norm = ggml_sqrt(ctx0, ggml_sum_rows(ctx0, ggml_sqr(ctx0, cur)));
+-    norm = ggml_scale_bias(ctx0, norm, 1.0f, 1e-6f);
+-
+-    ggml_tensor * factor = ggml_div(ctx0, ggml_fill(ctx0, norm, threshold), norm);
++    // x*min(1, t/|x|) == t * x/max(|x|, t): one l2_norm + one scale instead of 8 elementwise ops
++    return ggml_scale(ctx0, ggml_l2_norm(ctx0, cur, threshold), threshold);
++}
+ 
+-    return ggml_mul(ctx0, cur, ggml_clamp(ctx0, factor, 0.0f, 1.0f));
++ggml_tensor * llama_model_inkling2::graph::stack(const std::vector<ggml_tensor *> & blocks) {
++    if (blocks.empty()) {
++        return nullptr;
++    }
++    auto it = stacks.find(blocks);
++    if (it != stacks.end()) {
++        return it->second;
++    }
++    ggml_tensor * top   = ggml_rms_norm(ctx0, ggml_reshape_3d(ctx0, blocks.back(), n_embd, 1, n_tokens), 1e-6f);
++    ggml_tensor * below = stack(std::vector<ggml_tensor *>(blocks.begin(), blocks.end() - 1));
++    ggml_tensor * s     = below ? ggml_concat(ctx0, below, top, 1) : top;
++    stacks.emplace(blocks, s);
++    return s;
+ }
+ 
+ // attention over the depth: mix the earlier block outputs and cur with learned queries
++// (softmax over states then a weighted sum of the same states: the order of the states does not matter)
+ ggml_tensor * llama_model_inkling2::graph::mix(const std::vector<ggml_tensor *> & blocks, ggml_tensor * cur, ggml_tensor * query) {
+-    ggml_tensor * states = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens);
+-    for (ggml_tensor * block : blocks) {
+-        states = ggml_concat(ctx0, ggml_reshape_3d(ctx0, block, n_embd, 1, n_tokens), states, 1);
++    ggml_tensor * states = ggml_rms_norm(ctx0, ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens), 1e-6f);
++    if (ggml_tensor * s = stack(blocks)) {
++        states = ggml_concat(ctx0, s, states, 1);
+     }
+-    states = ggml_rms_norm(ctx0, states, 1e-6f);
+ 
+     ggml_tensor * queries = ggml_repeat(ctx0, query, ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, n_embd, query->ne[1], n_tokens));
+ 
+diff --git a/src/models/models.h b/src/models/models.h
+index 29dc527..93e8a7a 100644
+--- a/src/models/models.h
++++ b/src/models/models.h
+@@ -2563,6 +2563,9 @@ struct llama_model_inkling2 : public llama_model_base {
+     struct graph : public llm_graph_context {
+         graph(const llm_graph_params & params);
+         ggml_tensor * mix(const std::vector<ggml_tensor *> & blocks, ggml_tensor * cur, ggml_tensor * query);
++        // normalized block stack, built once per distinct block list (mix runs twice per layer on the same blocks)
++        ggml_tensor * stack(const std::vector<ggml_tensor *> & blocks);
++        std::map<std::vector<ggml_tensor *>, ggml_tensor *> stacks;
+         ggml_tensor * clip(ggml_tensor * cur, ggml_tensor * scale, float threshold);
+         ggml_tensor * control(ggml_tensor * cur, ggml_tensor * message, const llama_layer & layer, int module);
+         ggml_tensor * convolve(

@@ -120,3 +120,15 @@ Fallback if the dGPU gets desktop load again (less than ~7.9 GB free): `-ub 64` 
 1. Fuse the Inkling glue subgraphs (clip / control / convolve / mix) into single CUDA kernels in ggml-cuda (pattern fusion like the existing topk-moe one). Needs the CUDA toolkit (nvcc) and a ggml-cuda rebuild; exact source tarball is in `src\`. Estimated up to −8 ms/token (→ ~33 tok/s). Days of work.
 2. Make batch-2..4 verify passes cheap (graphs for mul_mat_id batch > 1, grouped CPU experts); only then is DSpark worth retesting.
 3. +1 outer layer on GPU (~+2%) if 450 MiB VRAM can be found; not safe at 32K today.
+
+## 21 Nov evening: self-built fork + graph rewrite (Opus)
+
+- **Toolchain:** CUDA 13.5 toolkit + VS2022, built the fork from source for sm_89 + Zen4 native (`build\`). Unpatched self-built = prebuilt speed (24.5 vs 24.7 tok/s screen, smoke PASS).
+- **Nsight Systems decode profile** (pick config, `--cuda-graph-trace=node`), per token: ~7,450 kernels; GPU busy 23.1 ms (weight matvecs ~12.5 ms, glue ~10 ms), launch gaps 2.8 ms, CPU-expert gaps 12 × ~1.2 ms ≈ 15 ms (GPU idle). The 12 CPU layers read ~400 MB of active experts per token: 7.6 ms at 52.5 GB/s, so ~half the CPU gap is not bandwidth (all 12 gaps ~1.2 ms whether the layer is 36 MB NVFP4 or 28 MB IQ3).
+- **KEEP graph rewrite** (`patches\inkling2-graph-fusion.patch`):
+  - `clip`: `x*min(1, t/|x|) == t * l2_norm(x, eps=t)`. 8 kernels become 2 (×144 per token).
+  - `mix`: the normalized block stack is memoized per distinct block list, instead of re-concatenating and re-normalizing every block on each of the 2 mixes per layer. Exact, because softmax-weighted mixing is order-invariant.
+  - llama-bench tg128, interleaved: prebuilt 25.47 / 25.54, patched 26.20 / 26.01 (**+2.4%**).
+  - KLD vs Q4_K_XL: 0.01524 ± 0.0005 (was 0.01501), same-top 96.35% (was 96.37%). Smoke PASS.
+- **REJECT** `-t 16` (23.9), `-t 7` (26.0) vs `-t 8` 26.3.
+- **Left:** the f32 loop controllers (`loop_*`, ~230 MB/token ≈ 1 ms) could go bf16 for ~0.5 ms. Dynamic conv taps + control epilogue need new fused ops (~1 ms). The fixed ~0.5 ms per CPU split (sync/threadpool wake, ×12) is the largest non-bandwidth item left.
