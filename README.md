@@ -113,31 +113,3 @@ Measured with llama-bench, pick config:
 | prefill, 128K mode, 32K deep | 121 | **162** |
 
 Quality is unchanged: KLD vs Q4_K_XL is 0.0152 (was 0.0150), same-top 96.37%, smoke test passes. At 107K tokens of context, decode is 19.5 tok/s.
-
-## Modal prefill for long prompts (`cloud\`)
-
-The laptop prefills at ~160 tok/s, so a 100K-token document takes 15–20 min. An H100 on Modal prefills it in under a minute. The flow:
-
-1. The proxy templates the prompt on the local server and sends that exact text to a deployed Modal app.
-2. On Modal, the same fork build loads the same GGUF (rebuilt on a Modal volume, sha256-verified), prefills it and saves the slot state.
-3. The proxy downloads the state and restores it into local slot 0. The local server then only processes the last few tokens and decodes.
-
-Measured:
-
-| prompt | Modal (cold start + prefill) | download | restore | local tokens left | answer |
-|---:|---:|---:|---:|---:|---|
-| 106,674 tokens | 68 s (prefill 39 s, 2,758 tok/s) | 213 s (1.14 GB) | 1.4 s | 4 | 3/3 codes |
-| 53,384 tokens | 32 s (prefill 15 s) | 58 s | 0.9 s | 4 | 3/3 codes |
-
-Your downlink is now the bottleneck: the state is ~10.7 KB per token in q4_0. One prefill costs a few cents of H100 time. The text you send goes to Modal, so don't use this for private documents.
-
-Setup, once:
-
-```powershell
-python -m venv cloud\.venv; cloud\.venv\Scripts\python -m pip install modal; cloud\.venv\Scripts\modal setup
-cloud\.venv\Scripts\modal run cloud/modal_prefill.py::prepare    # builds the image, rebuilds the pick on the volume, prints sha256
-cloud\.venv\Scripts\modal deploy cloud/modal_prefill.py
-.\start-inkling.ps1 -Long -Offload                                 # apps -> http://127.0.0.1:8081/v1
-```
-
-The Modal server's `-c` and KV type must match the local server's. The proxy passes them along (`--offload-ctx`, `--offload-kv`), and `start-inkling.ps1` sets them from `-Long`.

@@ -11,7 +11,7 @@ Results are cached by content hash, so the same history compresses to the same b
 llama-server's prompt cache keeps working.
 Per request: add "compress": false, or "compress_rate": 0.5, to the JSON body.
 """
-import argparse, hashlib, json, os, re, subprocess, sys, threading, time, urllib.request
+import argparse, hashlib, json, re, sys, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 A = argparse.ArgumentParser()
@@ -20,11 +20,6 @@ A.add_argument("--upstream", default="http://127.0.0.1:8080")
 A.add_argument("--rate", type=float, default=0.33)
 A.add_argument("--min-words", type=int, default=400)
 A.add_argument("--model", default="microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank")
-A.add_argument("--offload-min-tokens", type=int, default=0,
-               help="prefill on Modal when a request brings at least this many new (uncached) tokens; 0 = off")
-A.add_argument("--offload-ctx", type=int, default=131072, help="must equal the local server's -c")
-A.add_argument("--offload-kv", default="q4_0", help="must equal the local server's -ctk/-ctv")
-A.add_argument("--no-compress", action="store_true", help="only offload, never compress")
 ARGS = A.parse_args()
 
 _lock = threading.Lock()
@@ -98,37 +93,7 @@ def compress_text(text, rate, keep_tail):
     return res
 
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-_off_lock = threading.Lock()
-LAST_PROMPT = [""]
-
-
-def maybe_offload(body):
-    """Prefill on Modal when the templated prompt has many tokens the local slot has not seen yet.
-    The local slot holds LAST_PROMPT; only the part after the shared prefix would need a local prefill."""
-    keys = ("messages", "tools", "tool_choice", "chat_template_kwargs", "reasoning_format")
-    req = urllib.request.Request(ARGS.upstream + "/apply-template", json.dumps({k: body[k] for k in keys if k in body}).encode(),
-                                 {"Content-Type": "application/json"})
-    prompt = json.load(urllib.request.urlopen(req, timeout=120))["prompt"]
-    new_chars = len(prompt) - len(os.path.commonprefix([LAST_PROMPT[0], prompt]))
-    LAST_PROMPT[0] = prompt
-    if new_chars / 3.5 < ARGS.offload_min_tokens:
-        return
-    pf = os.path.join(HERE, "_offload_prompt.txt")
-    open(pf, "w", encoding="utf-8").write(prompt)
-    py = os.path.join(HERE, "..", "cloud", ".venv", "Scripts", "python.exe")
-    r = subprocess.run([py, os.path.join(HERE, "..", "cloud", "offload.py"), pf, "--n-ctx", str(ARGS.offload_ctx),
-                        "--kv", ARGS.offload_kv, "--url", ARGS.upstream], capture_output=True, text=True, timeout=3600)
-    os.remove(pf)
-    print("offload:", r.stdout.strip().splitlines()[-1] if r.returncode == 0 else "FAILED " + r.stderr[-400:], file=sys.stderr, flush=True)
-    body["id_slot"] = 0
-    body["cache_prompt"] = True
-
-
 def rewrite(body):
-    if ARGS.no_compress:
-        body.pop("compress", None); body.pop("compress_rate", None)
-        return body
     if body.pop("compress", True) is False:
         body.pop("compress_rate", None)
         return body
@@ -182,22 +147,14 @@ class H(BaseHTTPRequestHandler):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if self.path.rstrip("/").endswith("/chat/completions"):
             try:
-                body = rewrite(json.loads(raw))
-                if ARGS.offload_min_tokens:
-                    with _off_lock:
-                        try:
-                            maybe_offload(body)
-                        except Exception as e:
-                            print("offload failed, prefilling locally:", repr(e), file=sys.stderr)
-                raw = json.dumps(body).encode()
+                raw = json.dumps(rewrite(json.loads(raw))).encode()
             except Exception as e:
                 print("compress failed, passing through:", repr(e), file=sys.stderr)
         self._forward("POST", raw)
 
 
 if __name__ == "__main__":
-    if not ARGS.no_compress:
-        print(f"loading {ARGS.model} ...", flush=True)
-        compressor()
+    print(f"loading {ARGS.model} ...", flush=True)
+    compressor()
     print(f"compressing proxy on http://127.0.0.1:{ARGS.port} -> {ARGS.upstream} (rate {ARGS.rate})", flush=True)
     ThreadingHTTPServer(("127.0.0.1", ARGS.port), H).serve_forever()
