@@ -71,3 +71,20 @@ Compression cost: ~37 s of CPU for 130K words, cached afterwards.
 - **Loading:** `--load-mode none` gives better prefill and TTFT.
 - **What didn't help:** DSpark speculative decoding and requantizing the CPU-resident experts both lose on this machine.
 - **The limit:** the GPU side is bound by launch and glue overhead (~13K graph nodes per token). The practical llama.cpp ceiling here is ~35 tok/s.
+
+## Building the fork from source (+2.4% decode)
+
+`patches\inkling2-graph-fusion.patch` rewrites two Inkling graph helpers to launch fewer kernels:
+- **`clip`:** expressed as one `l2_norm` plus one `scale`.
+- **`mix`:** the normalized block stack is memoized.
+
+KLD is unchanged (0.0152 vs 0.0150). With the CUDA 13.5 toolkit and VS2022 installed:
+
+```powershell
+cd src\llama.cpp-b12588-mix-c0c3de8; git apply ..\..\patches\inkling2-graph-fusion.patch; cd ..\..
+$env:CUDA_PATH="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.5"
+cmake -S src\llama.cpp-b12588-mix-c0c3de8 -B build -G "Visual Studio 17 2022" -A x64 -T "cuda=$env:CUDA_PATH" "-DCUDAToolkit_ROOT=$env:CUDA_PATH" -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=89 -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
+cmake --build build --config Release -j 14 --target llama-server llama-bench
+```
+
+Copy the three CUDA DLLs into `build\bin\Release` as for the prebuilt. Then set `$env:INK_EXE` for `hillclimb\srv.ps1`, or point `start-inkling.ps1` at `build\bin\Release\llama-server.exe`.
