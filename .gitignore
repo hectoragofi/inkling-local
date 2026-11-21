@@ -10,3 +10,7 @@ src-dl/
 __pycache__/
 *.pyc
 .venv/
+compress/proxy.out
+compress/proxy.err
+build/
+cuda-dl/
