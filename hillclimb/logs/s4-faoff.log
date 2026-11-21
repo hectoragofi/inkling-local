@@ -1,0 +1,14 @@
+0.00.671.058 I srv  llama_server: initializing ...
+0.00.671.074 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.671.219 I srv  init_listene: The UI is disabled
+0.00.671.222 I srv  init_listene: Use --ui/--no-ui (or deprecated --webui/--no-webui) to enable/disable
+0.00.671.302 W srv  server_setup: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.687.368 I srv    load_model: loading model '..\Inkling-2-Mini-UD-IQ3_XXS.gguf'
+0.01.018.044 E llama_init_from_model: quantized V cache requires flash_attn to be enabled
+0.01.075.615 E common_fit_params: encountered an error while trying to fit params to free device memory: failed to create llama_context from model
+0.03.714.944 E llama_init_from_model: quantized V cache requires flash_attn to be enabled
+0.03.714.950 E cmn  common_init_: failed to create context with model '..\Inkling-2-Mini-UD-IQ3_XXS.gguf'
+0.03.714.951 E cmn  common_init_: failed to create context with model '..\Inkling-2-Mini-UD-IQ3_XXS.gguf'
+0.03.714.956 E srv    load_model: failed to create_context with model '..\Inkling-2-Mini-UD-IQ3_XXS.gguf'
+0.03.714.962 I srv   operator (): operator (): cleaning up before exit...
+0.03.718.515 E srv  server_run_i: exiting due to model loading error

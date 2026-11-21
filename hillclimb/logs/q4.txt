@@ -1,0 +1,29 @@
+17:11:47 healthy after 13.5 s
+17:12:09 c1 median 25.92 [25.92]
+17:12:25 prefill ~4096 201.4 tok/s over 3302 tokens
+17:13:31 prefill ~16384 195.9 tok/s over 12900 tokens
+17:16:29 long {'prompt_tokens': 29725, 'ttft_s': 166.6, 'prefill': 178.5, 'decode': 23.78, 'retrieval': '3/3'}
+{
+ "name": "mixnv-outer-ub80",
+ "time": "2026-11-21T17:11:33",
+ "startup_s": 13.5,
+ "ttft_short_ms": 388.5,
+ "c1_decode": 25.92,
+ "c1_all": [
+  25.92
+ ],
+ "prefill_4096": 201.4,
+ "prefill_4096_tokens": 3302,
+ "prefill_16384": 195.9,
+ "prefill_16384_tokens": 12900,
+ "long": {
+  "prompt_tokens": 29725,
+  "ttft_s": 166.6,
+  "prefill": 178.5,
+  "decode": 23.78,
+  "retrieval": "3/3"
+ },
+ "ok": true,
+ "mem_peak_gib": 24.95,
+ "flags": []
+}

@@ -1,0 +1,12 @@
+# big binaries / downloads (fetch again, see README)
+*.gguf
+*.kld
+*.zip
+llama/
+cudart/
+src/
+src-dl/
+# python
+__pycache__/
+*.pyc
+.venv/

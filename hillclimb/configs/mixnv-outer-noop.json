@@ -1,0 +1,67 @@
+{
+ "name": "mixnv-outer-noop",
+ "base_url": "http://127.0.0.1:8080",
+ "model": "inkling",
+ "launch": [
+  "powershell",
+  "-NoProfile",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-File",
+  "srv.ps1",
+  "start",
+  "mixnv-outer-noop",
+  "-m",
+  "..\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer.gguf",
+  "-ngl",
+  "99",
+  "-c",
+  "32768",
+  "--jinja",
+  "-ctk",
+  "q8_0",
+  "-ctv",
+  "q8_0",
+  "-ub",
+  "64",
+  "--load-mode",
+  "none",
+  "-ot",
+  "blk\\.([0-5]|1[89]|2[0-3])\\.ffn_.*_exps\\.=CPU",
+  "--no-op-offload"
+ ],
+ "stop": [
+  "powershell",
+  "-NoProfile",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-File",
+  "srv.ps1",
+  "stop"
+ ],
+ "health_timeout_s": 600,
+ "concurrency": 1,
+ "prefill_lengths": [
+  4096,
+  16384
+ ],
+ "temperature": 1.0,
+ "extra_body": {
+  "top_p": 1.0,
+  "top_k": 0,
+  "min_p": 0.0
+ },
+ "memory": {
+  "cap_gib": 30,
+  "probe": [
+   "powershell",
+   "-NoProfile",
+   "-ExecutionPolicy",
+   "Bypass",
+   "-File",
+   "srv.ps1",
+   "mem"
+  ],
+  "interval_s": 3
+ }
+}

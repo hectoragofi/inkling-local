@@ -1,0 +1,26 @@
+15:22:49 healthy after 10.6 s
+15:25:31 c1 median 19.87 [19.38, 19.07, 19.54, 20.97, 20.7, 20.19]
+15:25:51 prefill ~4096 165.3 tok/s over 3302 tokens
+15:27:09 prefill ~16384 165.5 tok/s over 12900 tokens
+{
+ "name": "iq3-nommap",
+ "time": "2026-11-21T15:22:38",
+ "startup_s": 10.6,
+ "ttft_short_ms": 533.5,
+ "c1_decode": 19.87,
+ "c1_all": [
+  19.38,
+  19.07,
+  19.54,
+  20.97,
+  20.7,
+  20.19
+ ],
+ "prefill_4096": 165.3,
+ "prefill_4096_tokens": 3302,
+ "prefill_16384": 165.5,
+ "prefill_16384_tokens": 12900,
+ "ok": true,
+ "mem_peak_gib": 22.41,
+ "flags": []
+}
