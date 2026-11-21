@@ -11,6 +11,40 @@ Result: about **26 tok/s decode** and **200 tok/s prefill** at a 32K context. Th
 .\start-inkling.ps1 -Safe    # use when the 4060 also drives a display (needs less VRAM)
 ```
 
+```powershell
+.\start-inkling.ps1 -Long       # 128K context (q4_0 KV): ~20.6 tok/s
+.\start-inkling.ps1 -Compress   # also start the compressing proxy; point apps at http://127.0.0.1:8081/v1
+```
+
+## Compressing proxy (`compress\`)
+
+`compress\proxy.py` is an OpenAI-compatible proxy that sits in front of llama-server. It compresses long messages before the model reads them:
+
+- **Prose:** compressed with LLMLingua-2 (`microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank`). It runs on the CPU at ~1,460 tok/s and uses no VRAM.
+- **Code:** only comments and blank lines are stripped.
+- **The question:** the last paragraph of your final message is never compressed.
+- **Caching:** text is cached per paragraph chunk, so a shared document compresses once and llama-server's prompt cache still hits.
+- **Per request:** add `"compress": false` or `"compress_rate": 0.5` to the request body.
+
+Setup:
+
+```powershell
+cd compress
+python -m venv .venv
+.\.venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+.\.venv\Scripts\python -m pip install llmlingua
+```
+
+Measured with `compress\e2e.py` on llama.cpp docs:
+
+| Input | Tokens | 3 hidden facts | Flag question |
+|---|---:|---|---|
+| ~45K-token doc, compressed | 26.1K (fits 32K) | 3/3 | correct |
+| 90K-char slice, raw | 30.1K | 3/3 | correct |
+| same slice, compressed | 12.3K (2.45×) | no answer (thinking hit 4K tokens) | correct |
+
+Compression cost: ~37 s of CPU for 130K words, cached afterwards.
+
 ## Setup: files not in git
 
 - **llama.cpp fork:** `llama\` holds the unsloth llama.cpp prebuilt `b12588-mix-c0c3de8`, Windows x64 cuda13-newer build, from <https://github.com/unslothai/llama.cpp/releases/tag/b12588-mix-c0c3de8>.
