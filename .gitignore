@@ -16,3 +16,12 @@ build/
 cuda-dl/
 # scratch files from other sessions
 /_*
+build-rb/
+build-rb*.log
+slots/
+cloud/*.json
+cloud/*.codes
+cloud/*.log
+compress/_offload_prompt.txt
+hillclimb/moebench/*.exe
+hillclimb/moebench/*.obj
