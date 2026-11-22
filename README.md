@@ -2,19 +2,50 @@
 
 This repo runs and tunes Thinking Machines' Inkling 2 Mini (a 26B looped MoE) locally on an RTX 4060 Laptop with 8 GB of VRAM, a Ryzen 7 7840HS, and 32 GB of DDR5-5600.
 
-Result: about **26 tok/s decode** and **200 tok/s prefill** at a 32K context. The starting point was 6 tok/s with naive `--n-cpu-moe` flags.
+Result at a 32K context: **~31 tok/s decode** and **~200 tok/s prefill**. Copy-heavy coding (edits, refactors) with greedy sampling reaches **55–90 tok/s** through ngram speculation. The starting point was 6 tok/s with naive `--n-cpu-moe` flags.
 
-## Run
+## Quick start
+
+Requirements:
+- Windows with an NVIDIA GPU that has 8 GB of VRAM. Tuned on an RTX 4060 Laptop (sm_89); other RTX 30/40/50 cards should work with different speeds.
+- 32 GB of RAM. The outer experts live in system RAM.
+- Python 3.10+, git, and ~60 GB of free disk (~31 GB after `-Clean`).
+- Optional, for the faster fork build: [CUDA Toolkit 13.x](https://developer.nvidia.com/cuda-downloads), Visual Studio 2022 with the C++ workload, and CMake.
 
 ```powershell
-.\start-inkling.ps1          # chat UI + OpenAI-compatible API at http://127.0.0.1:8080
-.\start-inkling.ps1 -Safe    # use when the 4060 also drives a display (needs less VRAM)
+git clone https://github.com/hectoragofi/inkling-local
+cd inkling-local
+.\setup.ps1              # downloads the model, builds the tuned file and llama.cpp
+.\start-inkling.ps1      # chat UI + OpenAI-compatible API at http://127.0.0.1:8080
 ```
 
-```powershell
-.\start-inkling.ps1 -Long       # 128K context (q4_0 KV): ~20.6 tok/s
-.\start-inkling.ps1 -Compress   # also start the compressing proxy; point apps at http://127.0.0.1:8081/v1
-```
+`setup.ps1` builds the realugbun `inkling2-speed` fork when the CUDA toolkit, Visual Studio and CMake are installed (~31 tok/s, with ngram speculation). If they aren't, it falls back to unsloth's prebuilt llama.cpp (~26 tok/s, no speculation). It is safe to re-run, and downloads resume.
+
+| `setup.ps1` flag | |
+|---|---|
+| `-Prebuilt` | skip the build and use the prebuilt |
+| `-Clean` | afterwards, delete the two ~29 GB source GGUFs the tuned file was mixed from |
+
+| `start-inkling.ps1` flag | |
+|---|---|
+| `-Safe` | the GPU also drives your display (needs less VRAM) |
+| `-Long` | 128K context (q4_0 KV): ~23–27 tok/s |
+| `-Greedy` | temperature 0 by default. Use it for coding (see below) |
+| `-Compress` | also start the compressing proxy; point apps at `http://127.0.0.1:8081/v1` |
+
+The API model name is `inkling`. If you run something else in the same window, Ctrl+C stops the server.
+
+## Fast coding (ngram speculation)
+
+The fork build runs with `--spec-type ngram-mod`. When the reply repeats text that is already in the context, the drafter proposes those tokens and the model verifies several at once. Measured with `hillclimb\spec_ab.py`, in tok/s:
+
+| workload | no speculation | ngram-mod, temp 1.0 | ngram-mod, temp 0 |
+|---|---:|---:|---:|
+| code edit (rewrite pasted code) | 28.3 | 47.1 | 54.6 |
+| code after a thinking pass that wrote it out | 28.3 | 76.8 | **90.6** |
+| essay / brand-new text | 29.5 | 28.5 | 28.8 |
+
+To get the high numbers, set `"temperature": 0` per request or start with `-Greedy`, and give it copy-heavy work. New code has nothing to copy, so it runs at the normal speed. Free text costs nothing extra.
 
 ## Compressing proxy (`compress\`)
 
@@ -45,9 +76,15 @@ Measured with `compress\e2e.py` on llama.cpp docs:
 
 Compression cost: ~37 s of CPU for 130K words, cached afterwards.
 
-## Setup: files not in git
+## What `setup.ps1` does (manual steps)
 
-- **llama.cpp fork:** `llama\` holds the unsloth llama.cpp prebuilt `b12588-mix-c0c3de8`, Windows x64 cuda13-newer build, from <https://github.com/unslothai/llama.cpp/releases/tag/b12588-mix-c0c3de8>.
+- **Tuned model file:** downloads `UD-IQ3_XXS` and `UD-Q4_K_XL`, then runs `hillclimb\mix.py custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer.gguf <IQ3> <Q4> '^blk\.([0-5]|1[89])\.ffn_.*_exps\.'`.
+- **Fork path:** clones realugbun `inkling2-speed` at `7669d89` and builds it into `build-rb\` (cmake flags below, with the CUDA arch taken from your GPU). Copies in the CUDA runtime DLLs, then converts the pick with `hillclimb\to_mainline.py`.
+- **Prebuilt path:** unzips the unsloth prebuilt into `llama\` and copies in the CUDA runtime DLLs.
+
+Details:
+
+- **llama.cpp prebuilt:** `llama\` holds the unsloth llama.cpp prebuilt `b12588-mix-c0c3de8`, Windows x64 cuda13-newer build, from <https://github.com/unslothai/llama.cpp/releases/tag/b12588-mix-c0c3de8>.
   - Copy `cudart64_13.dll`, `cublas64_13.dll` and `cublasLt64_13.dll` into it from ggml-org `cudart-llama-bin-win-cuda-13.5-x64.zip`. The bundle ships without them, and without them CUDA silently doesn't load.
   - Mainline llama.cpp gives gibberish on these files until PR #32704 is merged.
 - **Models:** take these from <https://huggingface.co/unsloth/Inkling-2-Mini-GGUF>:
@@ -113,3 +150,7 @@ Measured with llama-bench, pick config:
 | prefill, 128K mode, 32K deep | 121 | **162** |
 
 Quality is unchanged: KLD vs Q4_K_XL is 0.0152 (was 0.0150), same-top 96.37%, smoke test passes. At 107K tokens of context, decode is 19.5 tok/s.
+
+## License
+
+MIT for the scripts and notes in this repo. The model weights (Thinking Machines, via unsloth's GGUFs) and llama.cpp keep their own licenses.

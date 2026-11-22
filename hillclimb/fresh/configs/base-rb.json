@@ -1,0 +1,23 @@
+{
+ "exe": "C:\\Users\\hecto\\models\\inkling\\build-rb\\bin\\Release\\llama-server.exe",
+ "args": [
+  "-m",
+  "C:\\Users\\hecto\\models\\inkling\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf",
+  "-ngl",
+  "99",
+  "-c",
+  "131072",
+  "--jinja",
+  "-ctk",
+  "q4_0",
+  "-ctv",
+  "q4_0",
+  "--load-mode",
+  "none",
+  "-ub",
+  "64",
+  "-ot",
+  "blk\\.([0-7]|1[89]|2[0-3])\\.ffn_.*_exps\\.=CPU"
+ ],
+ "name": "base-rb"
+}

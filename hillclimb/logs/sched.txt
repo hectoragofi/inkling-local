@@ -1,0 +1,7 @@
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 8187 MiB):
+  Device 0: NVIDIA GeForce RTX 4060 Laptop GPU, compute capability 8.9, VMM: yes, VRAM: 8187 MiB
+| model                          |       size |     params | backend    | ngl | n_ubatch | type_k | type_v | ot                    |         lm |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | --: | -------: | -----: | -----: | --------------------- | ---------: | --------------: | -------------------: |
+| inkling2 ?B IQ3_XXS - 3.0625 bpw |  12.10 GiB |    26.07 B | CUDA       |  99 |       80 |   q8_0 |   q8_0 | blk\.([0-5]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU |       none |             tg1 |         13.51 ± 0.00 |
+
+build: afc0f2f (1)

@@ -1,0 +1,5 @@
+src/
+build-fresh/
+logs/
+slots/
+__pycache__/
