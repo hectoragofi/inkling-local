@@ -124,6 +124,55 @@ state-file header. Inference itself was all local.
 3. **Small-batch prompts at depth:** route Q ne[1] ≤ 8 to the VEC kernel instead of the f16 dequant path. This is a
    TTFT fix at depth (seconds per turn).
 4. CPU expert evaluations: ~0.13 ms of sync per evaluation × 12, plus NVFP4 at ~73% of RAM bandwidth. Small.
+5. **Hot-expert placement per expert, not per layer** (from Basalt, see below). Potentially the biggest lever.
+6. **Token embedding in pinned RAM, gathered by the GPU** (from Basalt): frees VRAM for more GPU experts.
+
+## Ideas from Basalt (jesdga95/basalt, read 22 Nov)
+
+Basalt (MIT, a fork of Strata) runs Inkling 2 Mini at 613 tok/s on an RTX 5090. Its own docs (`docs/models/inkling2.md`)
+say:
+- 613–628 tok/s is the "struct" workload with DSpark drafting, where 97.5% of drafts are accepted.
+- Plain decoding: 264 tok/s on a short chat, 173 at 131K, 108 at 400K.
+- Prefill: 14,100 tok/s at 2K, 8,900 at 128K.
+- Their pack is 19.7 GB: release NVFP4 experts bit for bit (14.7 GiB), Q8_0 attention and dense layers, and the
+  drafter in BF16.
+
+### Why it does not run here as-is
+
+- **Blackwell only.** It needs sm_120 and CUDA 13. The 4060 is sm_89, with no FP4 block-scaled tensor cores. Its NVFP4
+  prefill and expert path are built on those cores, so they would need a rewrite, not a port.
+- **Needs the experts on the card.** When experts spill, Basalt reads them from RAM over PCIe into the GPU, one bus read
+  per expert. Their own RTX 5060 Ti (16 GB, ~740 experts in RAM) gets 53–67 tok/s. On 8 GB most experts would spill,
+  and laptop PCIe (~12–16 GB/s) is slower than computing them on the CPU at ~50 GB/s, which is what we do now.
+- **Bandwidth.** The 5090 has ~1.8 TB/s against our measured ~220 GB/s, about 8×. Their 173 tok/s at 131K divided by
+  8 is ≈ 21, and we are at 23.8. Per unit of bandwidth, plain decoding here is already on par.
+- **Drafting.** DSpark needs a drafter (0.48 GiB) plus a verify pass that touches the union of experts across ~8
+  tokens. With CPU experts that union is paid in RAM. Old `hillclimb/PLAN.md` data already showed drafting losing here.
+  It is only worth revisiting once far more experts live on the GPU (lever 5).
+
+### What to rebuild here (ideas only; our own code in the llama.cpp fork)
+
+1. **Profile-driven expert placement (lever 5).** Basalt ships a routing profile (`data/profiles/inkling2-24x128.prof`)
+   and puts the *least routed* experts in RAM and the hot ones on the card. llama.cpp's `-ot` places a whole layer's
+   expert tensor on one device, so today we pick layers, not experts.
+   - Plan: log router picks over a corpus to get a per-(layer, expert) hit count.
+   - Plan: split each `ffn_*_exps` tensor into a GPU part (hot ids) and a CPU part (cold ids). In the MoE op, route each
+     selected expert to whichever device holds it, and sum the two partial results.
+   - The budget is the ~2 GB now spent on whole layers 6–7. If routing is skewed (e.g. the top 25% of experts take 60%
+     of the hits), the same VRAM covers far more of the traffic per token.
+   - Est.: unknown until the skew is measured. First step: dump router stats (cheap, CPU-only).
+   - Lossless: the same weights, only where they live changes.
+2. **Embedding in pinned RAM (lever 6).** Basalt keeps the 0.86 GiB token embedding in page-locked RAM and gathers one
+   row per token. Check our GGUF's `token_embd` size and placement: if it sits in VRAM, moving it frees room for hot
+   experts. Cost: one row copy per token, negligible.
+3. **Relative bias inside the attention kernel, no per-head mask.** Basalt's attention takes the learned bias over the last
+   1,024 positions directly. This is already lever 2 above, and it confirms that design.
+4. **Suffix drafting (copying from an earlier repeat in the context).** Basalt reports +13% on a copy-heavy prompt.
+   This is the ngram work the other session owns. Not duplicated here.
+5. **Window layers as ring buffers; only full layers grow.** llama.cpp's SWA cache already does this. Nothing to gain.
+6. **Prefill on tensor cores in 4,096-row chunks, staging spilled experts onto the card per chunk.** It is a prefill
+   idea (TTFT), not decode, and with 8 GB the staging must stream layer by layer. Worth a look after levers 1 and 3
+   restore fast prefill.
 
 ## Not verified
 
