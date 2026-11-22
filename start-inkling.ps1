@@ -5,6 +5,7 @@
 # ngram-mod speculation: copy-heavy replies (code edits) 1.9-3.2x faster, free text unchanged. Needs the fork build.
 # Uses the realugbun inkling2-speed fork (build-rb\) with the mainline-layout pick when built, else the unsloth prebuilt.
 #   -Greedy    temperature 0 by default (clients can still override per request). Copy-heavy code then hits 55-90 tok/s.
+# Weights are pinned in RAM (--load-mode mlock): under RAM pressure Windows paged the CPU experts out and decode fell to <1 tok/s. Needs ~10 GB free RAM at start.
 param([switch]$Safe, [switch]$Long, [switch]$Compress, [switch]$Greedy)
 $fork = "$PSScriptRoot\build-rb\bin\Release\llama-server.exe"
 $spec = @()
@@ -21,5 +22,5 @@ if ($Compress) {
   Write-Host "proxy starting on http://127.0.0.1:8081 (compressing)"
 }
 & $exe -m $m --host 127.0.0.1 --port 8080 --alias inkling -np 1 `
-  -ngl 99 -c $ctx --jinja -ctk $kv -ctv $kv --load-mode none -ub $ub -ot $ot `
+  -ngl 99 -c $ctx --jinja -ctk $kv -ctv $kv --load-mode mlock -ub $ub -ot $ot `
   @spec --temp $temp --top-p 1.0 --top-k 0 --min-p 0.0

@@ -105,7 +105,7 @@ Details:
 
 - **Compute buffer:** at the default `-ub 512` it takes 3.4 GB of VRAM. Use `-ub 64`–`80`.
 - **Expert placement:** keep all of the looped core (layers 6–17, which run 3× per token) on the GPU, and put the experts of layers 0–5 and 18–23 on the CPU (`-ot`).
-- **Loading:** `--load-mode none` gives better prefill and TTFT.
+- **Loading:** `--load-mode none` gives better prefill and TTFT than mmap, but under RAM pressure Windows pages the CPU experts out and decode drops below 1 tok/s. The launcher uses `--load-mode mlock` to keep them resident (needs ~10 GB free RAM at start).
 - **What didn't help:** DSpark speculative decoding and requantizing the CPU-resident experts both lose on this machine.
 - **The limit:** the GPU side is bound by launch and glue overhead (~13K graph nodes per token). The practical llama.cpp ceiling here is ~35 tok/s.
 
