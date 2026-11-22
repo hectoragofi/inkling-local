@@ -1,0 +1,45 @@
+{
+ "exe": "C:\\Users\\hecto\\models\\inkling\\hillclimb\\fresh\\build-fresh\\bin\\Release\\llama-server.exe",
+ "args": [
+  "-m",
+  "C:\\Users\\hecto\\models\\inkling\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf",
+  "-ngl",
+  "99",
+  "-c",
+  "131072",
+  "--jinja",
+  "-ctk",
+  "q4_0",
+  "-ctv",
+  "q4_0",
+  "--load-mode",
+  "none",
+  "-ub",
+  "16",
+  "-ot",
+  "blk\\.([0-5]|1[89]|2[0-3])\\.ffn_.*_exps\\.=CPU"
+ ],
+ "name": "prof-best-fake120",
+ "env": {
+  "INK_FA_VAR": "4324",
+  "INK_FAKE_NKV": "120000"
+ },
+ "wrap": [
+  "C:\\Program Files\\NVIDIA Corporation\\Nsight Systems 2026.5.2\\target-windows-x64\\nsys.exe",
+  "profile",
+  "--cuda-graph-trace=node",
+  "-t",
+  "cuda",
+  "-s",
+  "none",
+  "--cpuctxsw=none",
+  "--delay",
+  "35",
+  "--duration",
+  "6",
+  "-f",
+  "true",
+  "-o",
+  "logs\\prof-best-fake120"
+ ]
+}

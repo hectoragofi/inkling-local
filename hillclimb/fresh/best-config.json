@@ -1,0 +1,67 @@
+{
+ "decode_first": {
+  "exe": "C:\\Users\\hecto\\models\\inkling\\hillclimb\\fresh\\build-fresh\\bin\\Release\\llama-server.exe",
+  "env": {
+   "INK_FA_VAR": "4324"
+  },
+  "args": [
+   "-m",
+   "C:\\Users\\hecto\\models\\inkling\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf",
+   "-ngl",
+   "99",
+   "-c",
+   "131072",
+   "--jinja",
+   "-ctk",
+   "q4_0",
+   "-ctv",
+   "q4_0",
+   "--load-mode",
+   "none",
+   "-ub",
+   "16",
+   "-ot",
+   "blk\\.([0-5]|1[89]|2[0-3])\\.ffn_.*_exps\\.=CPU"
+  ],
+  "real_107k_tok_s": 23.77,
+  "fake_120k_tok_s": 23.38,
+  "empty_ctx_tok_s": 30.45,
+  "prefill_8k_tok_s": 74.9,
+  "kld_std": "0.01501 +- 0.00050"
+ },
+ "prefill_preserving": {
+  "exe": "C:\\Users\\hecto\\models\\inkling\\hillclimb\\fresh\\build-fresh\\bin\\Release\\llama-server.exe",
+  "env": {
+   "INK_FA_VAR": "4324"
+  },
+  "args": [
+   "-m",
+   "C:\\Users\\hecto\\models\\inkling\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf",
+   "-ngl",
+   "99",
+   "-c",
+   "131072",
+   "--jinja",
+   "-ctk",
+   "q4_0",
+   "-ctv",
+   "q4_0",
+   "--load-mode",
+   "none",
+   "-ub",
+   "64",
+   "-ot",
+   "blk\\.([0-7]|1[89]|2[0-3])\\.ffn_.*_exps\\.=CPU"
+  ],
+  "real_107k_tok_s": 20.69,
+  "empty_ctx_tok_s": 26.68,
+  "prefill_8k_tok_s": 121.0,
+  "kld_decode_path_ub1_q4kv": "0.01823 +- 0.00060 (control 0.01868 +- 0.00067)"
+ },
+ "baseline": {
+  "real_107k_tok_s": 19.2,
+  "fake_120k_tok_s": 18.8,
+  "empty_ctx_tok_s": 26.65,
+  "prefill_8k_tok_s": 120.6
+ }
+}
