@@ -1,0 +1,43 @@
+From 8a2157b9bd7dff3c94fe5f6dbb0615ef76d52e82 Mon Sep 17 00:00:00 2001
+From: Hector Raftakopoulos Gonzalez <hectoragofi@gmail.com>
+Date: Tue, 24 Nov 2026 00:22:51 +0100
+Subject: [PATCH 10/10] llama : keep the partial expert copy for the Inkling 2
+ loop layers outside the core
+
+#32807 copies every expert of an Inkling 2 loop weight because later passes reuse the device copy of a
+core layer. The prelude and coda layers have one MUL_MAT_ID per weight, so copying only the selected
+experts is still correct there and saves PCIe time in prefill.
+---
+ src/llama-context.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 07a0dbafc..8b9d9cfd2 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -12,6 +12,7 @@
+ #include "llama-moe-cache.h"
+ #include "llama-ext.h"
+ #include "llama-sampler.h"
++#include "models/models.h"
+ #include "llama.h"
+ 
+ #include <algorithm>
+@@ -3143,10 +3144,15 @@ bool llama_context::sched_copy_experts(ggml_backend_t backend, const ggml_tensor
+         return false;
+     }
+ 
+-    // Later loop passes can select different experts from the same device copy.
++    // Later loop passes can select different experts from the same device copy of a shared core layer, so those
++    // are copied whole. The prelude and coda layers have one MUL_MAT_ID per weight and keep the partial copy.
+     // TODO: copy only the experts needed by each pass (see #32807 and #32809).
+     if (lctx->model.arch == LLM_ARCH_INKLING2_LOOP) {
+-        return false;
++        const auto * lm = dynamic_cast<const llama_model_inkling2_loop *>(&lctx->model);
++        int il = -1;
++        if (!lm || sscanf(src->name, "blk.%d.", &il) != 1 || (il >= (int) lm->core_start && il < (int) lm->core_end)) {
++            return false;
++        }
+     }
+ 
+     const ggml_tensor * ids = node->src[2];

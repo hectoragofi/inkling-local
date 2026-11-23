@@ -29,3 +29,7 @@ hillclimb/moebench/*.obj
 
 build-next*/
 build-next*.log
+hillclimb/next/logs/
+hillclimb/next/prof/
+hillclimb/next/route/
+hillclimb/next/corpus/

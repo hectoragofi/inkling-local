@@ -10,7 +10,7 @@ ROOT = r"C:\Users\hecto\models\inkling"
 PORT = 8091
 N_PRED = 128
 N_SAMPLES = 4
-PP_TOKENS = 8192
+PP_TOKENS = int(os.environ.get("BENCH_PP_TOKENS", "8192"))
 SLOTS = os.path.join(ROOT, "slots")             # doc2 = 106,674-token q4_0 slot (128K mode only)
 DOC2_TOKENS = os.path.join(ROOT, "hillclimb", "fresh", "slots", "doc2.tokens.json")
 
@@ -36,7 +36,7 @@ def start(cfg, logpath):
         sys.exit(f"GPU busy: llama processes {llama_procs()}")
     env = dict(os.environ); env.update(cfg.get("env", {}))
     log = open(logpath, "w")
-    args = [cfg["exe"], "--port", str(PORT), "--host", "127.0.0.1", "-np", "1", "--no-webui", "--slot-save-path", SLOTS] + cfg["args"]
+    args = cfg.get("wrap", []) + [cfg["exe"], "--port", str(PORT), "--host", "127.0.0.1", "-np", "1", "--no-webui", "--slot-save-path", SLOTS] + cfg["args"]
     p = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, env=env, cwd=HERE)
     for _ in range(900):
         time.sleep(1)
@@ -49,7 +49,11 @@ def start(cfg, logpath):
             pass
     p.kill(); sys.exit("server start timeout")
 
-def stop(p):
+def stop(p, wrapped=False):
+    if wrapped:  # kill the server, let the wrapper (nsys) see it exit and write its report
+        subprocess.run(["powershell", "-NoProfile", "-c", "Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process"])
+        try: p.wait(600)
+        except subprocess.TimeoutExpired: p.kill()
     p.terminate()
     try: p.wait(60)
     except subprocess.TimeoutExpired: p.kill()
@@ -138,7 +142,7 @@ def main():
             rec["vram_peak_mib"] = max(rec.get("vram_peak_mib", 0), vram_used())
             print(json.dumps({k: v for k, v in rec.items() if not k.endswith("_text")}), flush=True)
     finally:
-        stop(p)
+        stop(p, bool(cfg.get("wrap")))
         with open(os.path.join(HERE, "ledger.jsonl"), "a") as f:
             f.write(json.dumps(rec) + "\n")
     print("RESULT", json.dumps(rec))

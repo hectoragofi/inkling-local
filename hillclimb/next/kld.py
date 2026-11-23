@@ -12,7 +12,9 @@ for a in [a for a in rest if "=" in a and not a.startswith("-")]:
 extra = [a for a in rest if not ("=" in a and not a.startswith("-"))]
 if os.path.exists(os.path.join(ROOT, ".gpu-busy")):
     sys.exit("GPU busy flag present")
-exe = os.path.join(ROOT, build, r"bin\Release\llama-perplexity.exe")
+exe = os.path.join(ROOT, build, "llama-perplexity.exe")  # a snapshot dir holds the binaries directly
+if not os.path.exists(exe):
+    exe = os.path.join(ROOT, build, r"bin\Release\llama-perplexity.exe")
 args = [exe, "-m", ROOT + r"\custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf", "-f", ROOT + r"\quality\corpus.txt",
         "--kl-divergence-base", ROOT + r"\quality\base-q4kxl.kld", "--kl-divergence", "-c", "512", "--chunks", "20", "-b", "2048",
         "-ngl", "99", "--load-mode", "none", "-ot", r"blk\.([0-5]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU"] + extra
@@ -20,7 +22,7 @@ os.makedirs(os.path.join(HERE, "logs"), exist_ok=True)
 log = os.path.join(HERE, "logs", name + ".kld.log")
 with open(log, "w") as f:
     rc = subprocess.run(args, stdout=f, stderr=subprocess.STDOUT, env=env).returncode
-s = open(log, errors="replace").read()
+s = open(log, encoding="utf-8", errors="replace").read()
 kld = re.findall(r"Mean\s+KLD:\s+([\d.]+)\s+±\s+([\d.]+)", s)
 top = re.findall(r"Same top p:\s+([\d.]+)\s+±\s+([\d.]+)", s)
 ppl = re.findall(r"Mean PPL\(Q\)\s+:\s+([\d.]+)", s)

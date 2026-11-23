@@ -13,6 +13,9 @@ extra = rest[2:]
 ctx, kv = {"32k": ("32768", "q8_0"), "64k": ("65536", "q8_0"), "128k": ("131072", "q4_0")}[mode]
 args = ["-m", ROOT + r"\custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf", "-ngl", "99", "-c", ctx, "--jinja",
         "-ctk", kv, "-ctv", kv, "--load-mode", "none", "-ub", ub, "-ot", r"blk\." + cpu + r"\.ffn_.*_exps\.=CPU"] + extra
-cfg = {"name": name, "exe": os.path.join(ROOT, build, r"bin\Release\llama-server.exe"), "args": args, "env": env}
+exe = os.path.join(ROOT, build, "llama-server.exe")  # a snapshot dir holds the binaries directly
+if not os.path.exists(exe):
+    exe = os.path.join(ROOT, build, r"bin\Release\llama-server.exe")
+cfg = {"name": name, "exe": exe, "args": args, "env": env}
 json.dump(cfg, open(os.path.join(HERE, "configs", name + ".json"), "w"), indent=1)
 print(name, " ".join(args[2:]), env)
