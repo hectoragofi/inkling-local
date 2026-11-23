@@ -26,3 +26,6 @@ compress/_offload_prompt.txt
 hillclimb/moebench/*.exe
 hillclimb/moebench/*.obj
 *.part
+
+build-next*/
+build-next*.log
