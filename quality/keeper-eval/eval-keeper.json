@@ -1,0 +1,125 @@
+{
+ "label": "keeper",
+ "rows": [
+  {
+   "kind": "ledger",
+   "seed": 0,
+   "ok": true,
+   "steps": 8,
+   "turns": 9,
+   "out_tok": 552,
+   "reread": 504,
+   "secs": 27.0
+  },
+  {
+   "kind": "orders",
+   "seed": 0,
+   "ok": true,
+   "steps": 12,
+   "turns": 13,
+   "out_tok": 947,
+   "reread": 659,
+   "secs": 46.6
+  },
+  {
+   "kind": "ledger",
+   "seed": 1,
+   "ok": true,
+   "steps": 7,
+   "turns": 8,
+   "out_tok": 581,
+   "reread": 478,
+   "secs": 26.8
+  },
+  {
+   "kind": "orders",
+   "seed": 1,
+   "ok": true,
+   "steps": 12,
+   "turns": 13,
+   "out_tok": 918,
+   "reread": 659,
+   "secs": 45.5
+  },
+  {
+   "kind": "ledger",
+   "seed": 2,
+   "ok": true,
+   "steps": 7,
+   "turns": 8,
+   "out_tok": 546,
+   "reread": 534,
+   "secs": 26.1
+  },
+  {
+   "kind": "orders",
+   "seed": 2,
+   "ok": true,
+   "steps": 12,
+   "turns": 13,
+   "out_tok": 1042,
+   "reread": 659,
+   "secs": 49.8
+  },
+  {
+   "kind": "ledger",
+   "seed": 3,
+   "ok": true,
+   "steps": 7,
+   "turns": 8,
+   "out_tok": 549,
+   "reread": 535,
+   "secs": 26.1
+  },
+  {
+   "kind": "orders",
+   "seed": 3,
+   "ok": true,
+   "steps": 12,
+   "turns": 13,
+   "out_tok": 1119,
+   "reread": 659,
+   "secs": 52.6
+  },
+  {
+   "kind": "ledger",
+   "seed": 4,
+   "ok": true,
+   "steps": 7,
+   "turns": 8,
+   "out_tok": 632,
+   "reread": 535,
+   "secs": 28.9
+  },
+  {
+   "kind": "orders",
+   "seed": 4,
+   "ok": true,
+   "steps": 12,
+   "turns": 13,
+   "out_tok": 977,
+   "reread": 711,
+   "secs": 48.1
+  },
+  {
+   "kind": "ledger",
+   "seed": 5,
+   "ok": false,
+   "steps": 8,
+   "turns": 9,
+   "out_tok": 516,
+   "reread": 698,
+   "secs": 26.7
+  },
+  {
+   "kind": "orders",
+   "seed": 5,
+   "ok": true,
+   "steps": 12,
+   "turns": 13,
+   "out_tok": 1118,
+   "reread": 658,
+   "secs": 52.8
+  }
+ ]
+}
