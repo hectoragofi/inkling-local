@@ -1,0 +1,177 @@
+WIP, does not build. Apply on top of 0002, 0003 and 0004 (ib-mcs 8fb8986eb + 0004).
+
+Goal: LLAMA_MOE_CACHE_SWAP=1. The MoE cache banks live at the top of the CUDA compute buffer, above what graphs
+of up to 32 tokens use. Batches larger than 32 tokens (prefill) overwrite them, so decode gets the copy space of
+prefill as extra cache. Measured potential: 35.1-35.2 tok/s decode (ub 16 + 600-850 MiB cache) while prefill
+keeps ub 384 (419 tok/s), vs 32.7 for the recommended 32K line.
+
+Done in this patch:
+- ggml_gallocr_get_buffer and ggml_backend_sched_get_buffer (the single-chunk compute buffer of a backend).
+- llama_moe_cache::max_batch made public, swap_enabled/swap_place/swap_phase/swap_check declared.
+- llama_context::sched_reserve: with swap, reserve a 32-token graph first, record the buffer size per backend
+  (lo), and call swap_place after the final pp reserve.
+- process_ubatch: swap_phase(n_tokens) before the graph, swap_check after ggml_backend_sched_alloc_graph.
+
+Still to write in llama-moe-cache.cpp:
+- getenv LLAMA_MOE_CACHE_SWAP; with swap, allocate the device banks with a dummy buffer (alloc_buf with
+  no_alloc = true), skip the clear.
+- lru.clear_slots(): empty canon, key_of, the lists and the slot maps, n_filled = 0, keep crf/last_use/clock.
+- swap_place: per device, banks at (buffer size - bank bytes) aligned down, must be >= lo + 16 MiB; set each
+  bank's data, then each view's data = view_src->data + view_offs; memset the banks to 0; clear_slots.
+- swap_phase: n_tokens > max_batch -> clear_slots once (dirty); first small batch after -> sched synchronize,
+  memset banks to 0 (zero slots), dirty = false. The cache refills by uploads while not full.
+- swap_check: if the compute buffer moved or grew, swap_place again with the stored lo.
+- The three method bodies of the public class forwarding to pimpl.
+Risk to check: the tensor->buffer of the banks stays the 1-byte dummy CUDA buffer (WEIGHTS usage) while data
+points into the compute buffer; uploads and memsets go through tensor->data, so this should hold. Gate with KLD.
+
+diff --git a/ggml/include/ggml-alloc.h b/ggml/include/ggml-alloc.h
+index 81cce2e2a..2be115e7f 100644
+--- a/ggml/include/ggml-alloc.h
++++ b/ggml/include/ggml-alloc.h
+@@ -72,6 +72,8 @@ GGML_API bool ggml_gallocr_reserve_n(
+ GGML_API bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph);
+ 
+ GGML_API size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id);
++// the buffer of buffer_id if it is a single chunk, else NULL
++GGML_API ggml_backend_buffer_t ggml_gallocr_get_buffer(ggml_gallocr_t galloc, int buffer_id);
+ 
+ // Utils
+ // Create a buffer and allocate all the tensors in a ggml_context
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index afb86338a..70060c6bf 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -366,6 +366,8 @@ extern "C" {
+ 
+     GGML_API ggml_backend_buffer_type_t ggml_backend_sched_get_buffer_type(ggml_backend_sched_t sched, ggml_backend_t backend);
+     GGML_API size_t                     ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
++    // the compute buffer of a backend if it is a single buffer, else NULL
++    GGML_API ggml_backend_buffer_t      ggml_backend_sched_get_buffer(ggml_backend_sched_t sched, ggml_backend_t backend);
+ 
+     GGML_API void                 ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend);
+     GGML_API ggml_backend_t       ggml_backend_sched_get_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node);
+diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
+index 90082d861..fb2261c34 100644
+--- a/ggml/src/ggml-alloc.c
++++ b/ggml/src/ggml-alloc.c
+@@ -1113,6 +1113,21 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
+     return ggml_vbuffer_size(galloc->buffers[buffer_id]);
+ }
+ 
++ggml_backend_buffer_t ggml_gallocr_get_buffer(ggml_gallocr_t galloc, int buffer_id) {
++    GGML_ASSERT(buffer_id >= 0 && buffer_id < galloc->n_buffers);
++
++    struct vbuffer * vb = galloc->buffers[buffer_id];
++    if (vb == NULL || vb->chunks[0] == NULL) {
++        return NULL;
++    }
++    for (int c = 1; c < GGML_VBUFFER_MAX_CHUNKS; c++) {
++        if (vb->chunks[c] != NULL) {
++            return NULL;
++        }
++    }
++    return vb->chunks[0];
++}
++
+ // utils
+ 
+ static struct ggml_tensor ** ggml_backend_alloc_ctx_tensors_from_buft_collect(
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 8e175649b..8c2c5f708 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -2565,6 +2565,14 @@ size_t ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backe
+     return ggml_gallocr_get_buffer_size(sched->galloc, backend_index);
+ }
+ 
++ggml_backend_buffer_t ggml_backend_sched_get_buffer(ggml_backend_sched_t sched, ggml_backend_t backend) {
++    GGML_ASSERT(sched);
++    int backend_index = ggml_backend_sched_backend_id(sched, backend);
++    GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
++
++    return ggml_gallocr_get_buffer(sched->galloc, backend_index);
++}
++
+ void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
+     GGML_ASSERT(sched);
+     int backend_index = ggml_backend_sched_backend_id(sched, backend);
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 579267224..79d0bb05e 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -844,6 +844,18 @@ void llama_context::sched_reserve() {
+ 
+     const uint32_t n_outputs_pp = std::min(n_tokens, cparams.n_outputs_max);
+ 
++    // with LLAMA_MOE_CACHE_SWAP, the MoE cache lives above what the graphs of small batches use
++    std::map<ggml_backend_t, size_t> swap_lo;
++    if (moe_cache && moe_cache->swap_enabled() && !model.no_alloc() && n_tokens > (uint32_t) llama_moe_cache::max_batch) {
++        const uint32_t n_small = (uint32_t) llama_moe_cache::max_batch;
++        if (!graph_reserve(n_small, 1, std::min(n_small, cparams.n_outputs_max), mctx.get())) {
++            throw std::runtime_error("failed to allocate compute buffers for the MoE cache swap");
++        }
++        for (auto * backend : backend_ptrs) {
++            swap_lo[backend] = ggml_backend_sched_get_buffer_size(sched.get(), backend);
++        }
++    }
++
+     // reserve pp (prompt processing) graph first so that buffers are only allocated once
+     {
+         auto * gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get(),
+@@ -911,6 +923,10 @@ void llama_context::sched_reserve() {
+         }
+     }
+ 
++    if (!swap_lo.empty()) {
++        moe_cache->swap_place(sched.get(), swap_lo);
++    }
++
+     for (size_t i = 0; i < backend_ptrs.size(); ++i) {
+         ggml_backend_t             backend = backend_ptrs[i];
+         ggml_backend_buffer_type_t buft    = backend_buft[i];
+@@ -1819,6 +1835,11 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+     auto * res = get_gf_res_prev();
+     auto * gf  = res->get_gf();
+ 
++    // with LLAMA_MOE_CACHE_SWAP, large batches use the memory of the MoE cache
++    if (moe_cache) {
++        moe_cache->swap_phase(sched.get(), ubatch.n_tokens);
++    }
++
+     // the new graph parameters
+     // in order to correctly reuse a graph, it's full topology has to be uniquely determined by these parameters
+     const auto gparams = graph_params(res, ubatch, mctx, gtype);
+@@ -1858,6 +1879,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
+             ret = GGML_STATUS_ALLOC_FAILED;
+             return nullptr;
+         }
++        if (moe_cache) {
++            moe_cache->swap_check(sched.get());
++        }
+ 
+         gf_res_prev_active = res;
+     }
+diff --git a/src/llama-moe-cache.h b/src/llama-moe-cache.h
+index 833eac360..c1fc432cb 100644
+--- a/src/llama-moe-cache.h
++++ b/src/llama-moe-cache.h
+@@ -62,6 +62,18 @@ public:
+ 
+     std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const;
+ 
++    // ubatches of up to max_batch tokens read their experts from the cache
++    static constexpr int64_t max_batch = 32;
++
++    // LLAMA_MOE_CACHE_SWAP=1: the banks live at the end of the compute buffer of their device, above the lo bytes used
++    // by the graphs of up to max_batch tokens; larger batches overwrite them and empty the cache, which refills after
++    bool swap_enabled() const;
++    void swap_place(ggml_backend_sched_t sched, const std::map<ggml_backend_t, size_t> & lo);
++    // before the graph of a ubatch of n_tokens tokens
++    void swap_phase(ggml_backend_sched_t sched, int64_t n_tokens);
++    // after a graph is allocated: the banks move with the compute buffer
++    void swap_check(ggml_backend_sched_t sched);
++
+ private:
+     struct impl;
+     std::unique_ptr<impl> pimpl;

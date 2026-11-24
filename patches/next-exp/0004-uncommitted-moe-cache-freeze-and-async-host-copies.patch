@@ -1,3 +1,11 @@
+Builds and runs (build-next-snap\ibh). Apply on top of 0002 and 0003 (ib-mcs 8fb8986eb).
+- LLAMA_MOE_CACHE_FREEZE=N: after N lookups of a group the cache contents stay fixed, all other experts run on
+  the CPU, the lookup no longer reads the router output back. The scheduler offers the copy callback a no-wait
+  copy first (graph NULL).
+- ggml-backend: results of CPU splits are copied to the GPU with set_tensor_async on the GPU stream instead of
+  a GPU synchronize + sync copy; an event makes the next CPU split wait for these copies.
+Measured: +0.7% each at 32K (34.1-34.2 vs 33.9), not additive; checks pass; KLD not run. Not kept.
+
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
 index 8e175649b..ff0f5929a 100644
 --- a/ggml/src/ggml-backend.cpp
