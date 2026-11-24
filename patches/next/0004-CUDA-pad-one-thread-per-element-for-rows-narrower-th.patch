@@ -1,7 +1,7 @@
 From 0ba2656ad2cad7b4ef644504b2b0ed47b56103d1 Mon Sep 17 00:00:00 2001
 From: realugbun <74101927+realugbun@users.noreply.github.com>
 Date: Sat, 21 Nov 2026 10:09:09 +0000
-Subject: [PATCH 04/10] CUDA: pad: one thread per element for rows narrower
+Subject: [PATCH 04/13] CUDA: pad: one thread per element for rows narrower
  than a block
 
 pad_f32 launches a block of CUDA_PAD_BLOCK_SIZE threads per row, so rows

@@ -1,12 +1,12 @@
 # python -I mkcfg.py <name> <build dir> <mode 32k|128k> [ub] [cpu-expert-layer regex] [extra args...] [ENV=VAL ...]
 # writes configs/<name>.json for bench.py
-import json, os, sys
+import json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = r"C:\Users\hecto\models\inkling"
 name, build, mode = sys.argv[1:4]
 rest = sys.argv[4:]
-env = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in rest if "=" in a and not a.startswith("-")}
-rest = [a for a in rest if not ("=" in a and not a.startswith("-"))]
+env = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in rest if re.match(r"[A-Z_][A-Z0-9_]*=", a)}
+rest = [a for a in rest if not (re.match(r"[A-Z_][A-Z0-9_]*=", a))]
 ub = rest[0] if rest else ("80" if mode == "32k" else "64")
 cpu = rest[1] if len(rest) > 1 else ("([0-5]|1[89]|2[0-3])" if mode == "32k" else "([0-7]|1[89]|2[0-3])")
 extra = rest[2:]

@@ -1,7 +1,7 @@
 From 447e2a31347571422c3349132ddf30ad95681f66 Mon Sep 17 00:00:00 2001
 From: Piotr Wilkin <ilintar@gmail.com>
 Date: Sun, 22 Nov 2026 14:53:40 +0100
-Subject: [PATCH 07/10] use the indexed bias in the Inkling 2 graph
+Subject: [PATCH 07/13] use the indexed bias in the Inkling 2 graph
 
 Assisted-by: Claude Opus 5.5
 ---

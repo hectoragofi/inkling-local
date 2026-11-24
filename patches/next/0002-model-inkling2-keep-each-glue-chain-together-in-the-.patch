@@ -1,7 +1,7 @@
 From 497cc90d82ab25d2efaea649a1e93076dfdfd337 Mon Sep 17 00:00:00 2001
 From: realugbun <74101927+realugbun@users.noreply.github.com>
 Date: Sat, 21 Nov 2026 09:54:32 +0000
-Subject: [PATCH 02/10] model : inkling2 : keep each glue chain together in the
+Subject: [PATCH 02/13] model : inkling2 : keep each glue chain together in the
  graph
 
 Expand the controller messages and projections, the r projection and

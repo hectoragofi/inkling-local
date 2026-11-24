@@ -1,0 +1,29 @@
+From 152be00ebc2a436779e54b40d0320f558ccc378c Mon Sep 17 00:00:00 2001
+From: Hector Raftakopoulos Gonzalez <hectoragofi@gmail.com>
+Date: Tue, 24 Nov 2026 01:29:40 +0100
+Subject: [PATCH 11/13] CUDA: indexed bias batches use the TILE kernel by
+ default, MMA behind INK_IB_MMA=1
+
+---
+ ggml/src/ggml-cuda/fattn.cu | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
+index 0d1d646d2..733f314d8 100644
+--- a/ggml/src/ggml-cuda/fattn.cu
++++ b/ggml/src/ggml-cuda/fattn.cu
+@@ -680,9 +680,11 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
+                 ggml_cuda_get_fattn_vec_case(Q->ne[0], K->type, V->type)) {
+             return BEST_FATTN_KERNEL_VEC;
+         }
+-        // batches: the MMA kernel adds the indexed bias while it loads the mask tile (one Q head per block)
+-        static const bool ib_tile = getenv("INK_IB_TILE") && atoi(getenv("INK_IB_TILE")) != 0;
+-        if (!ib_tile && turing_mma_available(cc) && Q->ne[0] == 128 && V->ne[0] == 128 && !kv_rows) {
++        // batches: the TILE kernel by default; INK_IB_MMA=1 selects the MMA kernel, which adds the indexed bias while it
++        // loads the mask tile (one Q head per block). On an RTX 4060 with q4_0 K/V at 128K the TILE kernel was faster
++        // (prefill +9%, a 22-token prompt at 107K depth 540 vs 691 ms); with q8_0 at 32K they were equal.
++        static const bool ib_mma = getenv("INK_IB_MMA") && atoi(getenv("INK_IB_MMA")) != 0;
++        if (ib_mma && turing_mma_available(cc) && Q->ne[0] == 128 && V->ne[0] == 128 && !kv_rows) {
+             return BEST_FATTN_KERNEL_MMA_F16;
+         }
+         return BEST_FATTN_KERNEL_TILE;

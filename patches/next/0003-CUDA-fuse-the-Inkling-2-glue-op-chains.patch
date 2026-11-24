@@ -1,7 +1,7 @@
 From 8e7a40c56ffdd037a304e39baa9c15766293f9d9 Mon Sep 17 00:00:00 2001
 From: realugbun <74101927+realugbun@users.noreply.github.com>
 Date: Sat, 21 Nov 2026 09:54:32 +0000
-Subject: [PATCH 03/10] CUDA: fuse the Inkling 2 glue op chains
+Subject: [PATCH 03/13] CUDA: fuse the Inkling 2 glue op chains
 
 Inkling 2 Mini runs 48 layer applications per token (a looped core), and
 each one runs a few dozen small glue ops: at batch size 1 the decode is

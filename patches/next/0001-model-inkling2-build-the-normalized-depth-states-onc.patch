@@ -1,7 +1,7 @@
 From d506b688cc07e9854cf6057328169571d411082f Mon Sep 17 00:00:00 2001
 From: realugbun <74101927+realugbun@users.noreply.github.com>
 Date: Sat, 21 Nov 2026 09:54:32 +0000
-Subject: [PATCH 01/10] model : inkling2 : build the normalized depth states
+Subject: [PATCH 01/13] model : inkling2 : build the normalized depth states
  once
 
 The depth attention normalized every earlier block output again for each

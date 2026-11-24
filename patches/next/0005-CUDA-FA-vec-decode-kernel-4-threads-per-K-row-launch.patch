@@ -1,7 +1,7 @@
 From f0ed96793c67316389716f0f54bef6143721e926 Mon Sep 17 00:00:00 2001
 From: local <local@local>
 Date: Mon, 23 Nov 2026 22:43:02 +0100
-Subject: [PATCH 05/10] CUDA: FA vec decode kernel 4 threads per K row, launch
+Subject: [PATCH 05/13] CUDA: FA vec decode kernel 4 threads per K row, launch
  bounds 128x4 (default), INK_FAKE_NKV aid
 
 ---

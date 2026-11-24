@@ -1,7 +1,7 @@
 From 8a2157b9bd7dff3c94fe5f6dbb0615ef76d52e82 Mon Sep 17 00:00:00 2001
 From: Hector Raftakopoulos Gonzalez <hectoragofi@gmail.com>
 Date: Tue, 24 Nov 2026 00:22:51 +0100
-Subject: [PATCH 10/10] llama : keep the partial expert copy for the Inkling 2
+Subject: [PATCH 10/13] llama : keep the partial expert copy for the Inkling 2
  loop layers outside the core
 
 #32807 copies every expert of an Inkling 2 loop weight because later passes reuse the device copy of a

@@ -1,7 +1,7 @@
 From 2c219fbfc3ce2c29383e376474ba36a29920bf3f Mon Sep 17 00:00:00 2001
 From: Piotr Wilkin <ilintar@gmail.com>
 Date: Sun, 22 Nov 2026 14:53:40 +0100
-Subject: [PATCH 06/10] just the CUDA/HIP support
+Subject: [PATCH 06/13] just the CUDA/HIP support
 
 Assisted-by: Claude Opus 5.5
 ---

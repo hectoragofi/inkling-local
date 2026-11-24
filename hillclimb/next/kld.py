@@ -7,9 +7,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 build, name = sys.argv[1], sys.argv[2]
 rest = sys.argv[3:]
 env = dict(os.environ)
-for a in [a for a in rest if "=" in a and not a.startswith("-")]:
+for a in [a for a in rest if re.match(r"[A-Z_][A-Z0-9_]*=", a)]:
     k, v = a.split("=", 1); env[k] = v
-extra = [a for a in rest if not ("=" in a and not a.startswith("-"))]
+extra = [a for a in rest if not (re.match(r"[A-Z_][A-Z0-9_]*=", a))]
 if os.path.exists(os.path.join(ROOT, ".gpu-busy")):
     sys.exit("GPU busy flag present")
 exe = os.path.join(ROOT, build, "llama-perplexity.exe")  # a snapshot dir holds the binaries directly

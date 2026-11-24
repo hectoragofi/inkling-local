@@ -20,7 +20,7 @@ files = sys.argv[1:]
 data = [load(f) for f in files]
 layers = sorted(data[0])
 E = len(data[0][layers[0]])
-fr = [0.25, 0.40, 0.50]
+fr = [0.10, 0.25, 0.40, 0.50]
 print(f"{len(files)} files, {E} experts per layer")
 print("layer  tokens   " + "  ".join(f"top{int(f*100)}%" for f in fr) + "   cross-file coverage of top40% (ranked on file i, measured on file j)")
 for l in layers:
