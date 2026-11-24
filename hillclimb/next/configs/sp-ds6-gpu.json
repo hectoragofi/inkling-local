@@ -1,0 +1,32 @@
+{
+ "name": "sp-ds6-gpu",
+ "exe": "C:\\Users\\hecto\\models\\inkling\\build-next-snap/ibg2\\llama-server.exe",
+ "args": [
+  "-m",
+  "C:\\Users\\hecto\\models\\inkling\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf",
+  "-ngl",
+  "99",
+  "-c",
+  "32768",
+  "--jinja",
+  "-ctk",
+  "q8_0",
+  "-ctv",
+  "q8_0",
+  "--load-mode",
+  "none",
+  "-ub",
+  "80",
+  "-ot",
+  "blk\\.([0-5]|1[89]|2[0-3])\\.ffn_.*_exps\\.=CPU",
+  "--spec-type",
+  "draft-dspark",
+  "-md",
+  "C:\\Users\\hecto\\models\\inkling\\dspark-Inkling-2-Mini-Q8_0.gguf",
+  "-ngld",
+  "99",
+  "--spec-draft-n-max",
+  "6"
+ ],
+ "env": {}
+}

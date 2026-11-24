@@ -1,0 +1,30 @@
+{
+ "name": "ibf-32k-fz",
+ "exe": "C:\\Users\\hecto\\models\\inkling\\build-next-snap/ibf\\llama-server.exe",
+ "args": [
+  "-m",
+  "C:\\Users\\hecto\\models\\inkling\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf",
+  "-ngl",
+  "99",
+  "-c",
+  "32768",
+  "--jinja",
+  "-ctk",
+  "q8_0",
+  "-ctv",
+  "q8_0",
+  "--load-mode",
+  "none",
+  "-ub",
+  "80",
+  "-ot",
+  "blk\\.([0-5]|1[89]|2[0-3])\\.ffn_.*_exps\\.=CPU",
+  "--moe-cache-mib",
+  "384",
+  "--moe-cache-cpu-share",
+  "0.95"
+ ],
+ "env": {
+  "LLAMA_MOE_CACHE_FREEZE": "600"
+ }
+}

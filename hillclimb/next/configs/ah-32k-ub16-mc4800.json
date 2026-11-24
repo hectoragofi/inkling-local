@@ -1,0 +1,28 @@
+{
+ "name": "ah-32k-ub16-mc4800",
+ "exe": "C:\\Users\\hecto\\models\\inkling\\build-next-snap/ibg3\\llama-server.exe",
+ "args": [
+  "-m",
+  "C:\\Users\\hecto\\models\\inkling\\custom\\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf",
+  "-ngl",
+  "99",
+  "-c",
+  "32768",
+  "--jinja",
+  "-ctk",
+  "q8_0",
+  "-ctv",
+  "q8_0",
+  "--load-mode",
+  "none",
+  "-ub",
+  "16",
+  "-ot",
+  "blk\\.(\\d+)\\.ffn_.*_exps\\.=CPU",
+  "--moe-cache-mib",
+  "4800",
+  "--moe-cache-cpu-share",
+  "0.95"
+ ],
+ "env": {}
+}
