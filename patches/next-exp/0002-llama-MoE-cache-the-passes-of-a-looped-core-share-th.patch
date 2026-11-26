@@ -1,0 +1,160 @@
+From ad39d09c51016ea6b73a955956cab49ef827e03f Mon Sep 17 00:00:00 2001
+From: Hector Raftakopoulos Gonzalez <hectoragofi@gmail.com>
+Date: Tue, 24 Nov 2026 02:15:15 +0100
+Subject: [PATCH 2/3] llama : MoE cache: the passes of a looped core share the
+ cache entries of their experts
+
+The cache slots of an Inkling 2 loop share the expert weights of the physical core layers. Each slot layer
+kept its own keys, so an expert used by three passes was cached three times. Keys, recency and the slot of
+each expert now belong to the first layer with those experts; each pass still gets its own slot map,
+rebuilt from that canonical list when it is planned. The slots of a group are capped by its distinct
+experts.
+---
+ src/llama-moe-cache.cpp | 58 +++++++++++++++++++++++++++++++----------
+ 1 file changed, 44 insertions(+), 14 deletions(-)
+
+diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
+index ba35af021..30ce51cb5 100644
+--- a/src/llama-moe-cache.cpp
++++ b/src/llama-moe-cache.cpp
+@@ -34,6 +34,11 @@ struct moe_cache_lru {
+     // [n_layer] data of the slot maps, the experts at slot n_slots or later are not cached
+     // the experts computed on the CPU read zero slots after the cached ones on the device
+     std::vector<int32_t *> slot_map;
++    // layers that share their experts (the cache slots of a looped core) share one key per expert and one canonical
++    // slot list: phys[il] is the first layer with the experts of layer il, canon[phys[il]][e] the cache slot of
++    // expert e (n_slots if not cached); slot_map[il] is rebuilt from it by each plan() of layer il
++    std::vector<int32_t> phys;
++    std::vector<std::vector<int32_t>> canon;
+     std::vector<int32_t>   key_of;   // [n_slots] key of the expert in the slot, -1 if empty
+ 
+     // one LRU list per class, the head is the least recently used end
+@@ -54,12 +59,14 @@ struct moe_cache_lru {
+     std::vector<int32_t> misses;
+     std::vector<uint64_t> token_zero; // [n_tokens] zero slots used by each token
+ 
+-    void init(int32_t n_layer, int32_t n_expert, int32_t n_slots) {
++    void init(int32_t n_layer, int32_t n_expert, int32_t n_slots, const std::vector<int32_t> & phys_of) {
+         GGML_ASSERT(n_class == (int) std::log2(1.0f/(1.0f - std::exp2(-1.0f/crf_half_life))) + 1);
+         this->n_expert = n_expert;
+         this->n_slots  = n_slots;
+         this->empty    = n_slots;
+         slot_map.assign(n_layer, nullptr);
++        phys = phys_of;
++        canon.assign(n_layer, std::vector<int32_t>(n_expert, n_slots));
+         key_of.assign(n_slots, -1);
+         prev.resize(n_slots);
+         next.resize(n_slots);
+@@ -208,14 +215,17 @@ struct moe_cache_lru {
+         }
+ 
+         int32_t * slots = slot_map[il];
++        const int32_t ip = phys[il];
++        int32_t * cs = canon[ip].data();
++        std::copy(cs, cs + n_expert, slots);
+ 
+         // update the CRF of all selected experts and promote hits before choosing victims for misses
+         misses.clear();
+         for (int32_t e : uniq) {
+-            const int32_t key = make_key(il, e);
+-            use(il, key);
+-            if (slots[e] < n_slots) {
+-                move(slots[e], class_of(key));
++            const int32_t key = make_key(ip, e);
++            use(ip, key);
++            if (cs[e] < n_slots) {
++                move(cs[e], class_of(key));
+                 n_hit++;
+             } else {
+                 misses.push_back(e);
+@@ -227,8 +237,8 @@ struct moe_cache_lru {
+         const size_t n_c = std::min(n_cpu(misses.size()), misses.size());
+         if (n_c > 0) {
+             std::sort(misses.begin(), misses.end(), [&](int32_t a, int32_t b) {
+-                const float crf_a = crf[make_key(il, a)];
+-                const float crf_b = crf[make_key(il, b)];
++                const float crf_a = crf[make_key(ip, a)];
++                const float crf_b = crf[make_key(ip, b)];
+                 return crf_a != crf_b ? crf_a < crf_b : a < b;
+             });
+             GGML_ASSERT((size_t) n_tokens*n_used == n_ids);
+@@ -270,19 +280,23 @@ struct moe_cache_lru {
+         // so consecutive experts often get consecutive slots and one upload
+         std::sort(misses.begin(), misses.end());
+         for (int32_t e : misses) {
+-            const int32_t s = victim(il);
++            const int32_t s = victim(ip);
+             if (key_of[s] >= 0) {
+-                slot_map[key_layer(key_of[s])][key_expert(key_of[s])] = empty;
++                canon[key_layer(key_of[s])][key_expert(key_of[s])] = empty;
++                if (key_layer(key_of[s]) == ip) {
++                    slots[key_expert(key_of[s])] = empty;
++                }
+             } else {
+                 n_filled++;
+             }
+-            const int32_t key = make_key(il, e);
++            const int32_t key = make_key(ip, e);
+             key_of[s] = key;
++            cs[e]     = s;
+             slots[e]  = s;
+             move(s, class_of(key));
+             fills.push_back({ e, s });
+         }
+-        clock[il] += n_tokens;
++        clock[ip] += n_tokens;
+         return true;
+     }
+ };
+@@ -499,13 +513,29 @@ struct llama_moe_cache::impl {
+             }
+             write_trace_header(split_sum);
+         }
++        // layers that share the experts of an earlier layer (the passes of a looped core) share its cache entries
++        std::vector<int32_t> phys_of(model.layers.size());
++        for (size_t il = 0; il < model.layers.size(); ++il) {
++            phys_of[il] = (int32_t) il;
++            const auto experts = llama_moe_cache_layer_experts(model.layers[il]);
++            for (size_t j = 0; j < il && !experts.empty(); ++j) {
++                if (llama_moe_cache_layer_experts(model.layers[j]) == experts) {
++                    phys_of[il] = (int32_t) j;
++                    break;
++                }
++            }
++        }
+         std::vector<size_t> n_tensors(devices.size(), 0);
+         size_t n_tensors_host = 0;
+         for (group & g : groups) {
+             const device & d = devices[g.id];
+             const int32_t n_expert  = g.ref[0]->ne[2];
+             const size_t  budget    = (size_t) ((double) size*d.split/split_sum*g.host_bytes/d.host_bytes);
+-            const int32_t max_slots = g.layers.size()*n_expert;
++            int32_t n_distinct = 0;
++            for (int32_t il : g.layers) {
++                n_distinct += phys_of[il] == il;
++            }
++            const int32_t max_slots = n_distinct*n_expert;
+             while (g.n_slots < max_slots && alloc_size(g, g.n_slots + 1) <= budget) {
+                 g.n_slots++;
+             }
+@@ -514,7 +544,7 @@ struct llama_moe_cache::impl {
+                 g.n_slots = 0;
+                 continue;
+             }
+-            g.lru.init(model.layers.size(), n_expert, g.n_slots);
++            g.lru.init(model.layers.size(), n_expert, g.n_slots, phys_of);
+             n_tensors[g.id] += g.ref.size()*(1 + g.layers.size());
+             n_tensors_host  += g.layers.size()*(n_zero > 0 ? 3 : 1); // slot maps and CPU map
+         }
+@@ -741,7 +771,7 @@ struct llama_moe_cache::impl {
+         }
+ 
+         // large batches only read the cache, so the experts used in generation stay in it
+-        const int32_t * slots = g.lru.slot_map[b.il];
++        const int32_t * slots = g.lru.slot_map[b.il] ? g.lru.canon[g.lru.phys[b.il]].data() : nullptr;
+         if (slots == nullptr || slots[e] >= g.n_slots) {
+             return 0;
+         }
+-- 
+2.50.1.windows.1
+

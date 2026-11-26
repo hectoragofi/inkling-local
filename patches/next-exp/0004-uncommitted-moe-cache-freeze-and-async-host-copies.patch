@@ -1,0 +1,215 @@
+Builds and runs (build-next-snap\ibh). Apply on top of 0002 and 0003 (ib-mcs 8fb8986eb).
+- LLAMA_MOE_CACHE_FREEZE=N: after N lookups of a group the cache contents stay fixed, all other experts run on
+  the CPU, the lookup no longer reads the router output back. The scheduler offers the copy callback a no-wait
+  copy first (graph NULL).
+- ggml-backend: results of CPU splits are copied to the GPU with set_tensor_async on the GPU stream instead of
+  a GPU synchronize + sync copy; an event makes the next CPU split wait for these copies.
+Measured: +0.7% each at 32K (34.1-34.2 vs 33.9), not additive; checks pass; KLD not run. Not kept.
+
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 8e175649b..ff0f5929a 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -1265,6 +1265,13 @@ struct ggml_backend_sched {
+     int n_prefetched;
+     int prefetch_split;     // the split that reads the prefetched inputs
+     int prefetch_backend_id; // the backend that copies them
++
++    // results of CPU splits copied to a backend with async copies, ordered on that backend instead of waiting for it;
++    // a CPU split waits for these copies before it computes, as it may overwrite their source
++    ggml_backend_event_t host_copy_events [GGML_SCHED_MAX_BACKENDS]; // created on first use
++    bool                 host_copy_tried  [GGML_SCHED_MAX_BACKENDS];
++    bool                 host_copy_pending[GGML_SCHED_MAX_BACKENDS];
++    bool                 host_copy_split; // the current split copied such an input
+ };
+ 
+ #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
+@@ -2134,6 +2141,33 @@ static void ggml_backend_sched_copy_input(ggml_backend_sched_t sched, struct ggm
+         return;
+     }
+ 
++    // a copy callback may first copy a host weight without the wait below (no graph), with copies ordered on the split backend
++    if (sched->callback_copy != NULL && ggml_backend_sched_is_host_weight(input) &&
++        sched->callback_copy(split_backend, input, input_cpy, NULL, sched->callback_copy_user_data)) {
++        return;
++    }
++
++    // a result of a CPU split, which computed synchronously: queue the copy on the split backend, after its earlier work
++    // that may still read the destination, without waiting for it
++    {
++        const struct ggml_tensor * base = input->view_src ? input->view_src : input;
++        if (split_backend->iface.set_tensor_async != NULL && input_cpy->buffer != NULL && !ggml_backend_buffer_is_host(input_cpy->buffer) &&
++            base->buffer != NULL && ggml_backend_buffer_is_host(base->buffer) &&
++            ggml_backend_buffer_get_usage(base->buffer) == GGML_BACKEND_BUFFER_USAGE_COMPUTE &&
++            ggml_backend_dev_type(ggml_backend_get_device(input_backend)) == GGML_BACKEND_DEVICE_TYPE_CPU &&
++            ggml_is_contiguous(input)) {
++            if (!sched->host_copy_tried[split_backend_id]) {
++                sched->host_copy_tried[split_backend_id]  = true;
++                sched->host_copy_events[split_backend_id] = ggml_backend_event_new(split_backend->device);
++            }
++            if (sched->host_copy_events[split_backend_id] != NULL) {
++                ggml_backend_tensor_set_async(split_backend, input_cpy, input->data, 0, ggml_nbytes(input));
++                sched->host_copy_split = true;
++                return;
++            }
++        }
++    }
++
+     // wait for the split backend to finish using the input before overwriting it
+     if (sched->events[split_backend_id][sched->cur_copy] != NULL) {
+         ggml_backend_event_wait(split_backend, sched->events[split_backend_id][sched->cur_copy]);
+@@ -2241,8 +2275,19 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+             }
+         }
+ 
++        // a CPU split may overwrite the source of the queued copies of earlier CPU results
++        if (ggml_backend_dev_type(ggml_backend_get_device(split_backend)) == GGML_BACKEND_DEVICE_TYPE_CPU) {
++            for (int b = 0; b < sched->n_backends; b++) {
++                if (sched->host_copy_pending[b]) {
++                    ggml_backend_event_synchronize(sched->host_copy_events[b]);
++                    sched->host_copy_pending[b] = false;
++                }
++            }
++        }
++
+         // copy the input tensors to the split backend
+         // the weights in host memory are copied last, so that the copy callback can read the other inputs of the split
++        sched->host_copy_split = false;
+         for (int input_id = 0; input_id < split->n_inputs; input_id++) {
+             struct ggml_tensor * input = split->inputs[input_id];
+             if (!ggml_backend_sched_is_host_weight(input) && sched->hv_tensor_requires_copy[hash_id(input)]) {
+@@ -2258,6 +2303,10 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+                 ggml_backend_sched_copy_input(sched, split, input);
+             }
+         }
++        if (sched->host_copy_split) {
++            ggml_backend_event_record(sched->host_copy_events[split_backend_id], split_backend);
++            sched->host_copy_pending[split_backend_id] = true;
++        }
+ 
+         if (!sched->callback_eval) {
+             enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
+@@ -2391,6 +2440,7 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+             ggml_backend_event_free(sched->events[b][c]);
+         }
+         ggml_backend_event_free(sched->prefetch_events[b]);
++        ggml_backend_event_free(sched->host_copy_events[b]);
+     }
+     ggml_gallocr_free(sched->galloc);
+     ggml_free(sched->ctx);
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 579267224..4f022d12b 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -3132,6 +3132,10 @@ bool llama_context::sched_copy_experts(ggml_backend_t backend, const ggml_tensor
+     if (lctx->moe_cache && lctx->moe_cache->copy(backend, src, dst, graph)) {
+         return true;
+     }
++    // called before the scheduler waits for the backend, only the MoE cache copies then
++    if (graph == nullptr) {
++        return false;
++    }
+ 
+     auto & st = lctx->copy_experts;
+ 
+diff --git a/src/llama-moe-cache.cpp b/src/llama-moe-cache.cpp
+index 30ce51cb5..c6655210b 100644
+--- a/src/llama-moe-cache.cpp
++++ b/src/llama-moe-cache.cpp
+@@ -348,6 +348,8 @@ struct llama_moe_cache::impl {
+ 
+     // layers of the same device with the same expert tensor layout share the banks and the LRU of a group
+     struct group {
++        bool    frozen  = false;          // LLAMA_MOE_CACHE_FREEZE: the slot and CPU maps no longer change
++        int64_t n_calls = 0;              // lookups with a CPU part since the cache was last unfrozen
+         int32_t id;                       // device
+         std::vector<ggml_tensor *> ref;   // expert tensors of the first layer
+         std::vector<int32_t> layers;
+@@ -405,6 +407,11 @@ struct llama_moe_cache::impl {
+     // LLAMA_MOE_CACHE_TRACE: the selected experts of each slot lookup, for a simulator of the cache
+     FILE * trace = nullptr;
+ 
++    // LLAMA_MOE_CACHE_FREEZE=N: after N lookups of a group, its cached experts stay and all other experts are computed
++    // on the CPU, so a lookup no longer reads the selected experts back: the device does not wait for the host between
++    // the router and the cached experts, and the CPU part runs while the device computes them
++    int64_t freeze_after = 0;
++
+     // slot maps in host memory
+     ggml_context_ptr ctx_host;
+     ggml_backend_buffer_ptr buf_host;
+@@ -506,6 +513,9 @@ struct llama_moe_cache::impl {
+ 
+         // within a device the budget is split by the size of the experts, so each group caches the same fraction of its experts
+         cpu_share_q = (uint32_t) std::lround(cpu_share*65536.0f);
++        if (const char * s = getenv("LLAMA_MOE_CACHE_FREEZE"); s != nullptr && *s != '\0' && n_zero > 0) {
++            freeze_after = std::max<int64_t>(0, atoll(s));
++        }
+         if (const char * path = getenv("LLAMA_MOE_CACHE_TRACE"); path != nullptr && *path != '\0') {
+             trace = fopen(path, "wb");
+             if (trace == nullptr) {
+@@ -806,6 +816,16 @@ struct llama_moe_cache::impl {
+ 
+         GGML_ASSERT(backend == devices[g.id].backend);
+ 
++        // called before the scheduler waits for the backend (no graph): only a frozen map, which does not change, is copied,
++        // ordered after the earlier work of the backend
++        if (graph == nullptr) {
++            if (!g.frozen || !has_cpu) {
++                return false;
++            }
++            ggml_backend_tensor_set_async(backend, dst, l.slot_map->data, 0, ggml_nbytes(l.slot_map));
++            return true;
++        }
++
+         // the get_rows that looks up the slots of the selected experts
+         const int n_nodes = ggml_graph_n_nodes(graph);
+         const ggml_tensor * lookup = nullptr;
+@@ -831,6 +851,48 @@ struct llama_moe_cache::impl {
+ 
+         const int32_t n_used = (int32_t) sel->src[0]->ne[0];
+ 
++        if (freeze_after > 0) {
++            // a lookup without a CPU part must upload its misses
++            if (g.frozen && !has_cpu) {
++                g.frozen  = false;
++                g.n_calls = 0;
++            }
++            if (!g.frozen && has_cpu && ++g.n_calls > freeze_after) {
++                bool ok = true;
++                for (int32_t jl : g.layers) {
++                    ok = ok && layers[jl].cpu_map != nullptr;
++                }
++                if (ok) {
++                    size_t n_cached = 0;
++                    for (int32_t jl : g.layers) {
++                        layer & lj = layers[jl];
++                        const int32_t * cs = g.lru.canon[g.lru.phys[jl]].data();
++                        int32_t * sm = (int32_t *) lj.slot_map->data;
++                        int32_t * cm = (int32_t *) lj.cpu_map->data;
++                        lj.cpu_experts.clear();
++                        for (int32_t e = 0; e < g.lru.n_expert; ++e) {
++                            if (cs[e] < g.lru.n_slots) {
++                                sm[e] = cs[e];
++                                cm[e] = -1;
++                                n_cached++;
++                            } else {
++                                sm[e] = g.lru.n_slots + e % n_zero;
++                                cm[e] = e;
++                                lj.cpu_experts.push_back(e);
++                            }
++                        }
++                    }
++                    g.frozen = true;
++                    LLAMA_LOG_INFO("%s: MoE cache frozen after %lld lookups, %zu of %zu layer experts cached\n", __func__,
++                        (long long) freeze_after, n_cached, g.layers.size()*(size_t) g.lru.n_expert);
++                }
++            }
++            if (g.frozen) {
++                ggml_backend_tensor_set_async(backend, dst, l.slot_map->data, 0, ggml_nbytes(l.slot_map));
++                return true;
++            }
++        }
++
+         ids.resize(ggml_nelements(sel));
+         ggml_backend_tensor_get_async(backend, sel, ids.data(), 0, ggml_nbytes(sel));
+         ggml_backend_synchronize(backend);

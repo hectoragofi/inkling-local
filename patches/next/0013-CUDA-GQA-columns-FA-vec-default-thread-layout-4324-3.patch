@@ -1,0 +1,25 @@
+From 095b70100974b97272a19b84d4220f0a21bd7af7 Mon Sep 17 00:00:00 2001
+From: Hector Raftakopoulos Gonzalez <hectoragofi@gmail.com>
+Date: Tue, 24 Nov 2026 01:41:08 +0100
+Subject: [PATCH 13/13] CUDA: GQA-columns FA vec: default thread layout 4324 (3
+ heads, 4/32 threads, 4 blocks per SM)
+
+At 106.7K depth with q4_0 K/V on an RTX 4060: 25.0 tok/s vs 23.2 for one Q head per block; the
+generic 4-column layout ran at 8.3.
+---
+ ggml/src/ggml-cuda/fattn-vec.cuh | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml-cuda/fattn-vec.cuh b/ggml/src/ggml-cuda/fattn-vec.cuh
+index 7c2abf41d..c34e63d75 100644
+--- a/ggml/src/ggml-cuda/fattn-vec.cuh
++++ b/ggml/src/ggml-cuda/fattn-vec.cuh
+@@ -645,7 +645,7 @@ void ggml_cuda_flash_attn_ext_vec_case(ggml_backend_cuda_context & ctx, ggml_ten
+             constexpr int cols_per_block = 4;
+             static const int gvar = [] {
+                 const char * e = getenv("INK_FA_GQAVAR");
+-                return e ? atoi(e) : 0;
++                return e ? atoi(e) : 4324; // 3 Q heads per block, 4 threads per K row, 32 per V row, 4 blocks per SM
+             }();
+             if constexpr ((type_K == GGML_TYPE_Q4_0 || type_K == GGML_TYPE_Q8_0) && type_K == type_V) {
+                 if (logit_softcap == 0.0f && gqa_ratio == 3) {

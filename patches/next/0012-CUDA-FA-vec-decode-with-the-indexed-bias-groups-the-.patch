@@ -1,0 +1,72 @@
+From 0ac060f8fea57a200ad14b3ddfdf2b12320eb276 Mon Sep 17 00:00:00 2001
+From: Hector Raftakopoulos Gonzalez <hectoragofi@gmail.com>
+Date: Tue, 24 Nov 2026 01:29:40 +0100
+Subject: [PATCH 12/13] CUDA: FA vec decode with the indexed bias groups the Q
+ heads of a K/V head in one block
+
+With the indexed bias the mask is shared by the heads, so the GQA-columns VEC path can read each K/V
+row once for its 3 Q heads. Each column adds its own head's bias from the table. On by default,
+INK_IB_GQA=0 restores one Q head per block; INK_FA_GQAVAR picks the thread layout.
+---
+ ggml/src/ggml-cuda/fattn-vec.cuh | 27 ++++++++++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/ggml/src/ggml-cuda/fattn-vec.cuh b/ggml/src/ggml-cuda/fattn-vec.cuh
+index 81a23aff0..7c2abf41d 100644
+--- a/ggml/src/ggml-cuda/fattn-vec.cuh
++++ b/ggml/src/ggml-cuda/fattn-vec.cuh
+@@ -328,7 +328,15 @@ static __global__ void flash_attn_ext_vec(
+ 
+ #pragma unroll
+         for (int j = 0; j < ncols; ++j) {
+-            if constexpr (indexed_bias) {
++            if constexpr (indexed_bias && gqa_cols) {
++                // one query, Q head head + j: the bias table of head j follows the one of head j - 1
++                const int k = k_VKQ_0 + tid;
++                const half mk = maskh[tid];
++                const int bin = head_bias.indices[k];
++                const half m = uint32_t(bin) < head_bias.n_bins && j < ncols_valid ? __float2half(__half2float(mk) + head_bias.table[j*head_bias.n_bins + bin]) : mk;
++                KQ_reg[j] += slope*__half2float(m);
++                KQ_max_new[j] = fmaxf(KQ_max[j], KQ_reg[j] + FATTN_KQ_MAX_OFFSET);
++            } else if constexpr (indexed_bias) {
+                 const int k = k_VKQ_0 + tid;
+                 const half m = use_rows && rows[k] < 0 ? half(-INFINITY) : head_bias.add(maskh[j*ne11 + tid], ic0 + j, k);
+                 KQ_reg[j] += slope*__half2float(m);
+@@ -584,6 +592,12 @@ void ggml_cuda_flash_attn_ext_vec_case_impl(ggml_backend_cuda_context & ctx, ggm
+     const int nthreads = ggml_cuda_fattn_vec_get_nthreads_host(cc);
+     const int nwarps   = nthreads / WARP_SIZE;
+     fattn_kernel_t fattn_kernel = flash_attn_ext_vec<D, cols_per_block, type_K, type_V, use_logit_softcap, gqa_cols, minb, ntkq_o, ntv_o>;
++    if constexpr (gqa_cols && D == 128 && !use_logit_softcap) {
++        if (dst->src[6]) {
++            GGML_ASSERT(dst->src[5] == nullptr);
++            fattn_kernel = flash_attn_ext_vec<D, cols_per_block, type_K, type_V, use_logit_softcap, gqa_cols, minb, ntkq_o, ntv_o, true, false>;
++        }
++    }
+     if constexpr (cols_per_block == 1 && !gqa_cols && (D == 64 || D == 128) && !use_logit_softcap) {
+         if (dst->src[6]) {
+             fattn_kernel = dst->src[5] ? flash_attn_ext_vec<D, cols_per_block, type_K, type_V, use_logit_softcap, gqa_cols, minb, ntkq_o, ntv_o, true, true> :
+@@ -618,15 +632,22 @@ void ggml_cuda_flash_attn_ext_vec_case(ggml_backend_cuda_context & ctx, ggml_ten
+             const char * e = getenv("GGML_CUDA_FA_VEC_GQA");
+             return e && atoi(e) != 0; // opt-in
+         }();
++        // with the indexed bias the mask is shared by the heads, so each block reads a K/V row once for its Q heads
++        static const bool ib_gqa_enabled = [] {
++            const char * e = getenv("INK_IB_GQA");
++            return !e || atoi(e) != 0; // on by default, INK_IB_GQA=0 runs one Q head per block
++        }();
++        const bool ib = dst->src[6] != nullptr;
+         const int64_t gqa_ratio = Q->ne[2] / K->ne[2];
+-        if (gqa_cols_enabled && Q->ne[1] == 1 && mask && mask->ne[2] > 1 && mask->ne[2] == Q->ne[2] && max_bias == 0.0f &&
++        if ((ib ? ib_gqa_enabled : gqa_cols_enabled) && Q->ne[1] == 1 && mask &&
++                (ib ? mask->ne[2] == 1 : mask->ne[2] > 1 && mask->ne[2] == Q->ne[2]) && max_bias == 0.0f &&
+                 gqa_ratio > 1 && gqa_ratio <= 4 && dst->src[5] == nullptr) {
+             constexpr int cols_per_block = 4;
+             static const int gvar = [] {
+                 const char * e = getenv("INK_FA_GQAVAR");
+                 return e ? atoi(e) : 0;
+             }();
+-            if constexpr (type_K == GGML_TYPE_Q4_0 && type_V == GGML_TYPE_Q4_0) {
++            if constexpr ((type_K == GGML_TYPE_Q4_0 || type_K == GGML_TYPE_Q8_0) && type_K == type_V) {
+                 if (logit_softcap == 0.0f && gqa_ratio == 3) {
+                     switch (gvar) {
+                         case 4324: ggml_cuda_flash_attn_ext_vec_case_impl<D, 3, type_K, type_V, false, true, 4, 4, 32>(ctx, dst); return;

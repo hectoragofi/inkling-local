@@ -1,0 +1,23 @@
+From bb99c478fe27aec58ea736d2f39f788156be6447 Mon Sep 17 00:00:00 2001
+From: local <local@local>
+Date: Mon, 23 Nov 2026 22:55:59 +0100
+Subject: [PATCH 08/13] llama-quant: MSVC build fix (C2131 on a captured
+ constexpr)
+
+---
+ src/llama-quant.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
+index c66f060f6..50824dd46 100644
+--- a/src/llama-quant.cpp
++++ b/src/llama-quant.cpp
+@@ -1671,7 +1671,7 @@ static std::unordered_map<std::string, ggml_type> target_bpw_type(
+         constexpr int64_t target_rank = 25;
+         constexpr int64_t k = 20;   // 20th singular value for condition number estimation
+         constexpr float eps_norm = 1e-8f;
+-        constexpr float eps_eig = EPSILON;
++        constexpr float eps_eig = (float) 1e-12; // = EPSILON; MSVC rejects reading the captured constexpr here
+         constexpr int jacobi_sweeps = 20;
+         if (total_rows_sampled < 1 || n_per_row < 1) { return INFINITE; }
+ 

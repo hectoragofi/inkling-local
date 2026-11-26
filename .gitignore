@@ -26,3 +26,12 @@ compress/_offload_prompt.txt
 hillclimb/moebench/*.exe
 hillclimb/moebench/*.obj
 *.part
+
+build-next*/
+build-next*.log
+hillclimb/next/logs/
+hillclimb/next/prof/
+hillclimb/next/route/
+hillclimb/next/corpus/
+keeper-cache.jsonl
+build-ib/
