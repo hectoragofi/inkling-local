@@ -32,8 +32,42 @@ cd inkling-local
 | `-Long` | 128K context (q4_0 KV): ~23–27 tok/s |
 | `-Greedy` | temperature 0 by default. Use it for coding (see below) |
 | `-Compress` | also start the compressing proxy; point apps at `http://127.0.0.1:8081/v1` |
+| `-Effort low` | thinking effort when the app sets none: `minimal`, `low`, `medium`, `high` (the model's default), `xhigh` |
+| `-NoKeeper` | no thinking keeper; llama-server itself listens on 8080 |
 
 The API model name is `inkling`. If you run something else in the same window, Ctrl+C stops the server.
+
+## Thinking keeper (`keeper.py`)
+
+Inkling is trained to see its own earlier thinking in the chat history. llama-server returns the thinking as `reasoning_content`, and it puts it back into the prompt only when the app sends that field again on the next turn. Most chat apps and agent harnesses drop it. The model then reads a history it was never trained on.
+
+`start-inkling.ps1` therefore starts `keeper.py` on port 8080 and moves llama-server to 8079. The keeper:
+
+- remembers the thinking of every reply (in `keeper-cache.jsonl`, so it survives restarts);
+- adds it back to any assistant message that arrives without it, matched by the history before it, by tool-call id, or by the reply text;
+- also accepts the other names apps use (`reasoning`, `reasoning_details`, inline `<think>` tags);
+- passes everything else through unchanged: the web UI, streaming, all other endpoints.
+
+Measured with `quality\agent_eval.py`: 12 multi-turn tool tasks, greedy, with a client that drops the thinking (results in `quality\keeper-eval\`).
+
+| | solved | output tokens | minutes |
+|---|---:|---:|---:|
+| thinking dropped (straight to llama-server) | 11/12 | 13,082 | 9.7 |
+| thinking restored (through the keeper) | 11/12 | 9,497 | 7.6 |
+| restored, `-Effort medium` | 10/12 | 10,467 | 8.2 |
+
+- The solve rate is the same; these tasks are too easy to separate the two on that.
+- On the 13-turn tasks the keeper used fewer output tokens in all six pairs (20–67% fewer). On the 9-turn tasks it used ~10% more in five of six. With its earlier thinking in view the model re-derives less.
+- Lower effort did not pay: `medium` solved one task fewer and used more tokens than the default.
+
+It needs only Python's standard library. `GET http://127.0.0.1:8080/keeper/stats` shows how many messages it restored. Apps that already send `reasoning_content` back are left alone. The Anthropic-style `/v1/messages` endpoint is passed through without this fix.
+
+## Memory
+
+The server needs ~10 GB of free RAM and ~17 GB of commit. Two things broke that on this laptop:
+
+- **Prompt cache.** llama-server keeps old conversations in RAM, up to 8 GB by default. During a 40-conversation run its private memory grew from 17 GB to 25 GB, free RAM fell to 3 GB and decode slowed several times over. The launcher now passes `--cache-ram 2048`.
+- **Shared GPU memory.** A browser on the integrated GPU held 16 GB of commit that no process list shows. The model then failed to load (`unable to allocate CUDA_Host buffer`). The launcher prints a warning with the three biggest users when memory is short.
 
 ## Fast coding (ngram speculation)
 

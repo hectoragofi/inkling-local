@@ -33,3 +33,4 @@ hillclimb/next/logs/
 hillclimb/next/prof/
 hillclimb/next/route/
 hillclimb/next/corpus/
+keeper-cache.jsonl
