@@ -1,5 +1,5 @@
 # One-shot setup for Inkling 2 Mini on an 8 GB NVIDIA GPU (Windows).
-#   .\setup.ps1             build the realugbun inkling2-speed fork if the toolchain is there (~31 tok/s), else use the prebuilt
+#   .\setup.ps1             build mainline llama.cpp + patches\next if the toolchain is there (~33 tok/s), else use the prebuilt
 #   .\setup.ps1 -Prebuilt   skip the build, use unsloth's prebuilt llama.cpp (~26 tok/s, no ngram speculation)
 #   .\setup.ps1 -Clean      afterwards delete the two source GGUFs (~29 GB) that the tuned file was mixed from
 # Safe to re-run: every step skips work that is already done. Downloads resume.
@@ -14,8 +14,8 @@ $HF       = "https://huggingface.co/unsloth/Inkling-2-Mini-GGUF/resolve/main"
 $MAINLINE = "$HF/Mainline_Support/Inkling-2-Mini-UD-IQ3_XXS.gguf_file"
 $PREBUILT_URL = "https://github.com/unslothai/llama.cpp/releases/download/b12588-mix-c0c3de8/app-b12588-mix-c0c3de8-windows-x64-cuda13-newer.zip"
 $CUDART   = "https://github.com/ggml-org/llama.cpp/releases/download/b12606/cudart-llama-bin-win-cuda-13.5-x64.zip"
-$FORK     = "https://github.com/realugbun/llama.cpp"
-$FORK_REV = "7669d89977ff6d9d48500951ce4b6a0a5d51ab21"   # inkling2-speed, tested
+$UPSTREAM = "https://github.com/ggml-org/llama.cpp"
+$BASE_REV = "c212d25ad34ff1fdf775793cda07e009560cf66b"   # master 23 Nov 2026; patches\next\*.patch go on top
 
 $IQ3  = "$root\Inkling-2-Mini-UD-IQ3_XXS.gguf"
 $Q4   = "$root\Inkling-2-Mini-UD-Q4_K_XL.gguf"
@@ -63,9 +63,10 @@ $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.e
 $vsVer = $null
 if (Test-Path $vswhere) { $vsVer = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property catalog_productLineVersion }
 $canBuild = $cudaPath -and (Test-Path "$cudaPath\bin\nvcc.exe") -and $vsVer -and (Have cmake) -and (Have git)
-$useFork = (-not $Prebuilt) -and ($canBuild -or (Test-Path "$root\build-rb\bin\Release\llama-server.exe"))
+$haveBuilt = (Test-Path "$root\build-ib\bin\Release\llama-server.exe") -or (Test-Path "$root\build-rb\bin\Release\llama-server.exe")
+$useFork = (-not $Prebuilt) -and ($canBuild -or $haveBuilt)
 if (-not $Prebuilt -and -not $useFork) {
-  Write-Host "CUDA Toolkit / Visual Studio 2022 C++ / CMake / git not all found: using the prebuilt (~26 tok/s instead of ~31)." -ForegroundColor Yellow
+  Write-Host "CUDA Toolkit / Visual Studio 2022 C++ / CMake / git not all found: using the prebuilt (~26 tok/s instead of ~33)." -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------- python
@@ -91,24 +92,29 @@ else {
 
 # ---------------------------------------------------------------- runtime
 if ($useFork) {
-  Step "llama.cpp: realugbun inkling2-speed fork"
-  $exe = "$root\build-rb\bin\Release\llama-server.exe"
-  if (Test-Path $exe) { Write-Host "have build-rb\" }
+  Step "llama.cpp: mainline $($BASE_REV.Substring(0, 9)) + patches\next (Inkling speed patches)"
+  $bdir = "$root\build-ib"
+  if (Test-Path "$bdir\bin\Release\llama-server.exe") { Write-Host "have build-ib\" }
+  elseif ((-not $canBuild) -and (Test-Path "$root\build-rb\bin\Release\llama-server.exe")) { $bdir = "$root\build-rb"; Write-Host "have build-rb\ (older fork build; install the toolchain and re-run for build-ib)" }
   else {
-    $src = "$root\src\llama.cpp-rb"
+    $src = "$root\src\llama.cpp-ib"
     if (-not (Test-Path "$src\.git")) {
-      & git clone -q --filter=blob:none --no-checkout -c core.longpaths=true $FORK $src; if ($LASTEXITCODE -ne 0) { Fail "git clone failed" }
+      & git clone -q --filter=blob:none --no-checkout -c core.longpaths=true $UPSTREAM $src; if ($LASTEXITCODE -ne 0) { Fail "git clone failed" }
     }
-    & git -C $src -c core.longpaths=true checkout -q -f $FORK_REV; if ($LASTEXITCODE -ne 0) { Fail "git checkout $FORK_REV failed" }
+    if (Test-Path "$src\.git\rebase-apply") { & git -C $src am --abort }
+    & git -C $src -c core.longpaths=true checkout -q -f --detach $BASE_REV; if ($LASTEXITCODE -ne 0) { Fail "git checkout $BASE_REV failed" }
+    $patches = Get-ChildItem "$root\patches\next\00*.patch" | Sort-Object Name | ForEach-Object { $_.FullName }
+    & git -C $src -c core.longpaths=true -c user.name=inkling-setup -c user.email=setup@localhost am -q --whitespace=nowarn @patches
+    if ($LASTEXITCODE -ne 0) { Fail "applying patches\next failed" }
     $gen = "Visual Studio 17 2022"
     if ($vsVer -ne "2022") { $gen = "Visual Studio $((& $vswhere -latest -property installationVersion).Split('.')[0]) $vsVer" }
-    & cmake -S $src -B "$root\build-rb" -G $gen -A x64 -T "cuda=$cudaPath" "-DCUDAToolkit_ROOT=$cudaPath" `
+    & cmake -S $src -B $bdir -G $gen -A x64 -T "cuda=$cudaPath" "-DCUDAToolkit_ROOT=$cudaPath" `
       -DGGML_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=$cc" -DGGML_NATIVE=ON -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
     if ($LASTEXITCODE -ne 0) { Fail "cmake configure failed (re-run with -Prebuilt to skip the build)" }
-    & cmake --build "$root\build-rb" --config Release -j $env:NUMBER_OF_PROCESSORS --target llama-server llama-bench
+    & cmake --build $bdir --config Release -j $env:NUMBER_OF_PROCESSORS --target llama-server llama-bench
     if ($LASTEXITCODE -ne 0) { Fail "build failed (re-run with -Prebuilt to skip the build)" }
   }
-  if (-not (Test-Path "$root\build-rb\bin\Release\cudart64_13.dll")) { Copy-Cudart "$root\build-rb\bin\Release" }
+  if (-not (Test-Path "$bdir\bin\Release\cudart64_13.dll")) { Copy-Cudart "$bdir\bin\Release" }
 
   Step "Converting the tuned file to the mainline inkling2_loop layout"
   if (Test-Path $PICKM) { Write-Host "have $(Split-Path $PICKM -Leaf)" }

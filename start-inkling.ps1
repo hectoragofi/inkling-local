@@ -1,6 +1,6 @@
 # Start Inkling 2 Mini (tuned pick). Chat UI + API at http://127.0.0.1:8080
 #   -Safe      the 4060 also drives a display (less than ~7.9 GB VRAM free)
-#   -Long      128K context (q4_0 KV, experts of 0-7 + 18-23 on CPU)
+#   -Long      128K context (q4_0 KV, experts of 0-6 + 18-23 on CPU; 0-7 on older builds)
 #   -Compress  also start the LLMLingua-2 compressing proxy: point apps at http://127.0.0.1:8081/v1
 #   -Greedy    temperature 0 by default (clients can still override per request). Copy-heavy code then hits 55-90 tok/s.
 #   -Effort    thinking effort when the client does not set one: minimal, low, medium, high (model default), xhigh.
@@ -8,15 +8,21 @@
 #   -NoKeeper  serve llama-server directly on 8080, without the thinking keeper (see below)
 # Thinking keeper (keeper.py): Inkling expects its own earlier thinking in the history, and most apps do not send it
 # back. The keeper sits on 8080, remembers each reply's thinking and puts it back; llama-server moves to 8079.
-# ngram-mod speculation: copy-heavy replies (code edits) 1.9-3.2x faster, free text unchanged. Needs the fork build.
-# Uses the realugbun inkling2-speed fork (build-rb\) with the mainline-layout pick when built, else the unsloth prebuilt.
+#   -NoSpec    no ngram-mod speculation (greedy output is then identical to plain decoding)
+# ngram-mod speculation: copy-heavy replies (code edits) about 2x faster, free text unchanged. Needs a self-built server.
+# Server, best first: build-ib\ (mainline llama.cpp + patches\next: ~33 tok/s, 419 tok/s prefill at 32K),
+# build-rb\ (realugbun inkling2-speed fork, ~31 tok/s), else unsloth's prebuilt (~26 tok/s).
 # Weights are pinned in RAM (--load-mode mlock): under RAM pressure Windows paged the CPU experts out and decode fell to <1 tok/s. Needs ~10 GB free RAM at start.
-param([switch]$Safe, [switch]$Long, [switch]$Compress, [switch]$Greedy, [switch]$NoKeeper,
+param([switch]$Safe, [switch]$Long, [switch]$Compress, [switch]$Greedy, [switch]$NoKeeper, [switch]$NoSpec,
       [ValidateSet("", "minimal", "low", "medium", "high", "xhigh")][string]$Effort = "")
+$ib = "$PSScriptRoot\build-ib\bin\Release\llama-server.exe"
 $fork = "$PSScriptRoot\build-rb\bin\Release\llama-server.exe"
-$spec = @()
-if (Test-Path $fork) { $exe = $fork; $spec = @("--spec-type", "ngram-mod"); $m = "$PSScriptRoot\custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf" }
+$mainline = "$PSScriptRoot\custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer-mainline.gguf"
+$spec = @(); $kind = "prebuilt"
+if (Test-Path $ib) { $exe = $ib; $m = $mainline; $kind = "ib" }
+elseif (Test-Path $fork) { $exe = $fork; $m = $mainline; $kind = "rb" }
 else { $exe = "$PSScriptRoot\llama\llama-server.exe"; $m = "$PSScriptRoot\custom\Inkling-2-Mini-mix-IQ3core-NVFP4outer.gguf" }
+if ($kind -ne "prebuilt" -and -not $NoSpec) { $spec = @("--spec-type", "ngram-mod") }
 if (-not (Test-Path $exe) -or -not (Test-Path $m)) { Write-Host "Not set up yet: run .\setup.ps1 first." -ForegroundColor Red; exit 1 }
 
 # RAM check. The model needs ~10 GB of free RAM and ~17 GB of commit. A browser can hold many GB of commit as
@@ -36,9 +42,16 @@ try {
 
 $temp = "1.0"; if ($Greedy) { $temp = "0" }
 $ctx = "32768"; $kv = "q8_0"; $ub = "80"; $ot = 'blk\.([0-5]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU'
-if ($Safe) { $ub = "64"; $ot = 'blk\.([0-7]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU' }
-if ($Long) { $ctx = "131072"; $kv = "q4_0"; $ub = "64"; $ot = 'blk\.([0-7]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU' }
 $extra = @()
+if ($kind -eq "ib") {
+  # Measured in hillclimb\next (A/B/A, KLD unchanged): 32K 32.7 tok/s + 419 prefill; 128K 29.1, 25.1 at 107K deep.
+  $ub = "384"; $extra += @("--moe-cache-mib", "256", "--moe-cache-cpu-share", "0.95")
+  if ($Safe) { $ub = "80"; $extra = @(); $ot = 'blk\.([0-7]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU' }
+  if ($Long) { $ctx = "131072"; $kv = "q4_0"; $ub = "1024"; $extra = @(); $ot = 'blk\.([0-6]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU' }
+} else {
+  if ($Safe) { $ub = "64"; $ot = 'blk\.([0-7]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU' }
+  if ($Long) { $ctx = "131072"; $kv = "q4_0"; $ub = "64"; $ot = 'blk\.([0-7]|1[89]|2[0-3])\.ffn_.*_exps\.=CPU' }
+}
 if ($Effort) { $extra += @("--reasoning-effort", $Effort) }
 
 $port = "8080"; $keeper = $null
